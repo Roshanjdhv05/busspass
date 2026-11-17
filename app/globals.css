@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+html, body { background: #F6F5F0; color: #1E2522; -webkit-tap-highlight-color: transparent; }
+body { font-family: "Plus Jakarta Sans", Inter, system-ui, sans-serif; overflow-x: hidden; min-width: 320px; }
+* { -webkit-font-smoothing: antialiased; }
+:focus-visible { outline: 2px solid #3E8A66; outline-offset: 2px; }
+.leaflet-container { font-family: inherit; z-index: 0; }
+.leaflet-popup-content-wrapper { border-radius: 14px; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+@media print { .no-print { display: none !important; } }
