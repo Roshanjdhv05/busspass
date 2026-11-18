@@ -44,9 +44,11 @@ export function newPassId(): string {
 // ------------------------------------------------------------------ auth / users
 export async function registerStudentToSupabase(name: string, email: string, password: string): Promise<User> {
   const e = email.trim().toLowerCase();
+  const p = password.trim();
+  const trimmedName = name.trim();
 
   // Check for duplicate in localStorage
-  if (db.users.all().some((u) => u.email.toLowerCase() === e)) {
+  if (db.users.all().some((u) => u.email.trim().toLowerCase() === e)) {
     throw new Error("An account with this email already exists.");
   }
 
@@ -55,37 +57,51 @@ export async function registerStudentToSupabase(name: string, email: string, pas
   const at = nowIso();
   const collegeName = getSettings()?.collegeName ?? "";
 
-  const user: User = { id: userId, email: e, password, role: "student", name: name.trim(), createdAt: at };
+  const user: User = { id: userId, email: e, password: p, role: "student", name: trimmedName, createdAt: at };
   const profile: StudentProfile = {
-    id: profileId, userId, fullName: user.name, studentId: "", college: collegeName,
+    id: profileId, userId, fullName: trimmedName, studentId: "", college: collegeName,
     course: "", year: "", mobile: "", email: e, createdAt: at,
   };
 
   // --- Write to Supabase first (if configured) ---
   if (isSupabaseConfigured() && supabase) {
-    // Check for duplicate in Supabase
-    const { data: existing } = await supabase.from("users").select("id").eq("email", e).maybeSingle();
-    if (existing) throw new Error("An account with this email already exists.");
+    // Check for duplicate in Supabase (case-insensitive)
+    const { data: existing, error: checkErr } = await supabase
+      .from("users")
+      .select("id")
+      .ilike("email", e)
+      .maybeSingle();
+    
+    if (checkErr) {
+      console.warn("Could not check duplicate on Supabase, proceeding:", checkErr.message);
+    }
+    if (existing) {
+      throw new Error("An account with this email already exists in the system.");
+    }
 
     const { error: userErr } = await supabase.from("users").insert({
-      id: userId, email: e, password, role: "student", name: user.name, created_at: at,
+      id: userId, email: e, password: p, role: "student", name: trimmedName, created_at: at,
     });
-    if (userErr) throw new Error(`Failed to save account: ${userErr.message}`);
+    if (userErr) {
+      console.error("Supabase user insert error:", userErr);
+      throw new Error(`Failed to save account to database: ${userErr.message}`);
+    }
 
     const { error: profileErr } = await supabase.from("student_profiles").insert({
-      id: profileId, user_id: userId, full_name: user.name, student_id: "",
+      id: profileId, user_id: userId, full_name: trimmedName, student_id: "",
       college: collegeName, course: "", year: "", mobile: "", email: e, created_at: at,
     });
     if (profileErr) {
+      console.error("Supabase profile insert error:", profileErr);
       // Rollback user row
       await supabase.from("users").delete().eq("id", userId);
-      throw new Error(`Failed to save profile: ${profileErr.message}`);
+      throw new Error(`Failed to save student profile: ${profileErr.message}`);
     }
   }
 
   // --- Always write to localStorage (source of truth for session) ---
-  db.users.add(user);
-  db.studentProfiles.add(profile);
+  if (!db.users.get(user.id)) db.users.add(user);
+  if (!db.studentProfiles.get(profile.id)) db.studentProfiles.add(profile);
 
   return user;
 }

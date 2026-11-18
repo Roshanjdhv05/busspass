@@ -16,8 +16,8 @@ export default function LoginPage() {
   const router = useRouter();
   const toast = useToast();
   const [role, setRole] = useState<Role>("student");
-  const [email, setEmail] = useState("student@demo.com");
-  const [password, setPassword] = useState("demo123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [remember, setRemember] = useState(true);
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -30,7 +30,11 @@ export default function LoginPage() {
     try { const r = localStorage.getItem("bpms:rememberEmail"); if (r) { setEmail(r); } } catch { /* ignore */ }
   }, []);
 
-  const pickRole = (r: Role) => { setRole(r); setErr(""); setEmail(r === "admin" ? "admin@demo.com" : "student@demo.com"); setPassword("demo123"); if (r === "admin") setMode("login"); };
+  const pickRole = (r: Role) => {
+    setRole(r);
+    setErr("");
+    if (r === "admin") setMode("login");
+  };
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault(); setErr("");
@@ -105,7 +109,7 @@ export default function LoginPage() {
             </Field>
             <div className="flex items-center justify-between text-sm">
               <label className="flex min-h-[44px] items-center gap-2 text-ink-soft"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="h-4 w-4 accent-forest-700" /> Remember me</label>
-              <button type="button" onClick={() => toast("Demo build: password is demo123", "info")} className="font-semibold text-forest-600">Forgot password?</button>
+              <button type="button" onClick={() => toast("Please contact your transport administrator to reset your password.", "info")} className="font-semibold text-forest-600">Forgot password?</button>
             </div>
             {err && <motion.div initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} role="alert" className="rounded-xl bg-red-50 px-3 py-2.5 text-sm font-medium text-red-700">{err}</motion.div>}
             <Button type="submit" size="lg" full loading={busy}>{mode === "login" ? "Login" : "Create account"} <ArrowRight size={18} /></Button>
@@ -114,7 +118,7 @@ export default function LoginPage() {
           {role === "student" && (
             <p className="mt-4 text-center text-sm text-ink-soft">
               {mode === "login" ? "New student? " : "Already registered? "}
-              <button onClick={() => { setMode(mode === "login" ? "register" : "login"); setErr(""); if (mode === "login") { setEmail(""); setPassword(""); } else { setEmail("student@demo.com"); setPassword("demo123"); } }} className="font-bold text-forest-700">{mode === "login" ? "Create an account" : "Login"}</button>
+              <button onClick={() => { setMode(mode === "login" ? "register" : "login"); setErr(""); }} className="font-bold text-forest-700">{mode === "login" ? "Create an account" : "Login"}</button>
             </p>
           )}
         </motion.div>
