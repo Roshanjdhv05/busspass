@@ -1,9 +1,8 @@
 "use client";
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, Eye, EyeOff, GraduationCap, Info, Map, ShieldCheck } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, GraduationCap, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/useToast";
 import { BusPhoto, Button, Field, Input, Logo } from "@/components/ui";
@@ -118,12 +117,6 @@ export default function LoginPage() {
               <button onClick={() => { setMode(mode === "login" ? "register" : "login"); setErr(""); if (mode === "login") { setEmail(""); setPassword(""); } else { setEmail("student@demo.com"); setPassword("demo123"); } }} className="font-bold text-forest-700">{mode === "login" ? "Create an account" : "Login"}</button>
             </p>
           )}
-
-          <div className="mt-5 flex items-start gap-2 rounded-xl bg-mint-100/70 p-3 text-xs text-forest-800"><Info size={15} className="mt-0.5 shrink-0" /><span>Demo logins — Student: <b>student@demo.com</b> · Admin: <b>admin@demo.com</b> · Password: <b>demo123</b></span></div>
-          <div className="mt-4 flex justify-center gap-5 text-sm font-semibold text-forest-700">
-            <Link href="/about" className="inline-flex min-h-[44px] items-center gap-1">About the system</Link>
-            <Link href="/routes" className="inline-flex min-h-[44px] items-center gap-1"><Map size={15} /> Available routes</Link>
-          </div>
         </motion.div>
       </div>
     </div>
