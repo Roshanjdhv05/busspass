@@ -53,19 +53,117 @@ const TABLE_MAP: Record<string, string> = {
 };
 
 // Convert camelCase keys → snake_case for Supabase, and back
-function toSnake(obj: Record<string, unknown>): Record<string, unknown> {
+function toSnake(obj: Record<string, unknown>, table?: string): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
+    // Custom mapping for settings fields
+    if (table === "settings") {
+      if (k === "validityDays" && v && typeof v === "object") {
+        const vd = v as Record<string, number>;
+        out["validity_monthly"] = vd.monthly ?? 30;
+        out["validity_quarterly"] = vd.quarterly ?? 90;
+        out["validity_half_yearly"] = vd["half-yearly"] ?? 180;
+        out["validity_yearly"] = vd.yearly ?? 365;
+        continue;
+      }
+      if (k === "fees" && v && typeof v === "object") {
+        const fees = v as Record<string, number>;
+        out["fee_monthly"] = fees.monthly ?? 450;
+        out["fee_quarterly"] = fees.quarterly ?? 1250;
+        out["fee_half_yearly"] = fees["half-yearly"] ?? 2400;
+        out["fee_yearly"] = fees.yearly ?? 4500;
+        continue;
+      }
+      if (k === "counters" && v && typeof v === "object") {
+        const counters = v as Record<string, number>;
+        out["counter_app"] = counters.app ?? 0;
+        out["counter_pass"] = counters.pass ?? 0;
+        continue;
+      }
+    }
+    // Custom mapping for application fields
+    if (table === "applications") {
+      if (k === "studentId") { out["student_id_no"] = v; continue; }
+      if (k === "documents") {
+        const docs = (v as Record<string, string> | undefined) || {};
+        out["doc_photo"] = docs.photo ?? null;
+        out["doc_student_id_card"] = docs.studentIdCard ?? null;
+        out["doc_admission_proof"] = docs.admissionProof ?? null;
+        continue;
+      }
+      if (k === "timeline") {
+        // Handled separately or skipped on applications table
+        continue;
+      }
+    }
     const snake = k.replace(/([A-Z])/g, "_$1").toLowerCase();
     out[snake] = v;
   }
   return out;
 }
-function toCamel(obj: Record<string, unknown>): Record<string, unknown> {
+function toCamel(obj: Record<string, unknown>, table?: string): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
+    if (table === "settings") {
+      if (k === "validity_monthly" || k === "validity_quarterly" || k === "validity_half_yearly" || k === "validity_yearly") {
+        if (!out["validityDays"]) {
+          out["validityDays"] = { monthly: 30, quarterly: 90, "half-yearly": 180, yearly: 365 };
+        }
+        const vd = out["validityDays"] as Record<string, number>;
+        if (k === "validity_monthly") vd.monthly = Number(v) || 30;
+        if (k === "validity_quarterly") vd.quarterly = Number(v) || 90;
+        if (k === "validity_half_yearly") vd["half-yearly"] = Number(v) || 180;
+        if (k === "validity_yearly") vd.yearly = Number(v) || 365;
+        continue;
+      }
+      if (k === "fee_monthly" || k === "fee_quarterly" || k === "fee_half_yearly" || k === "fee_yearly") {
+        if (!out["fees"]) {
+          out["fees"] = { monthly: 450, quarterly: 1250, "half-yearly": 2400, yearly: 4500 };
+        }
+        const fees = out["fees"] as Record<string, number>;
+        if (k === "fee_monthly") fees.monthly = Number(v) || 450;
+        if (k === "fee_quarterly") fees.quarterly = Number(v) || 1250;
+        if (k === "fee_half_yearly") fees["half-yearly"] = Number(v) || 2400;
+        if (k === "fee_yearly") fees.yearly = Number(v) || 4500;
+        continue;
+      }
+      if (k === "counter_app" || k === "counter_pass") {
+        if (!out["counters"]) {
+          out["counters"] = { app: 0, pass: 0 };
+        }
+        const counters = out["counters"] as Record<string, number>;
+        if (k === "counter_app") counters.app = Number(v) || 0;
+        if (k === "counter_pass") counters.pass = Number(v) || 0;
+        continue;
+      }
+    }
+    if (table === "applications") {
+      if (k === "student_id_no") { out["studentId"] = v; continue; }
+      if (k === "doc_photo" || k === "doc_student_id_card" || k === "doc_admission_proof") {
+        if (!out["documents"]) out["documents"] = {};
+        const docs = out["documents"] as Record<string, unknown>;
+        if (k === "doc_photo") docs["photo"] = v;
+        if (k === "doc_student_id_card") docs["studentIdCard"] = v;
+        if (k === "doc_admission_proof") docs["admissionProof"] = v;
+        continue;
+      }
+    }
     const camel = k.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
     out[camel] = v;
+  }
+  if (table === "settings") {
+    if (!out["validityDays"]) {
+      out["validityDays"] = { monthly: 30, quarterly: 90, "half-yearly": 180, yearly: 365 };
+    }
+    if (!out["fees"]) {
+      out["fees"] = { monthly: 450, quarterly: 1250, "half-yearly": 2400, yearly: 4500 };
+    }
+    if (!out["counters"]) {
+      out["counters"] = { app: 0, pass: 0 };
+    }
+  }
+  if (table === "applications" && !out["timeline"]) {
+    out["timeline"] = [{ key: "submitted", label: "Application submitted", at: (out["submittedAt"] as string) || new Date().toISOString() }];
   }
   return out;
 }
@@ -103,14 +201,23 @@ export class Collection<T extends { id: string }> {
 
   private async sbUpsert(item: T) {
     if (!supabase) return;
-    const { error } = await supabase.from(this.tableName).upsert(toSnake(item as unknown as Record<string, unknown>));
-    if (error) console.error(`[Supabase] upsert error on ${this.tableName}:`, error.message, error.details);
+    try {
+      const payload = toSnake(item as unknown as Record<string, unknown>, this.tableName);
+      const { error } = await supabase.from(this.tableName).upsert(payload);
+      if (error) console.error(`[Supabase] upsert error on ${this.tableName}:`, error.message, error.details);
+    } catch (e) {
+      console.error(`[Supabase] unexpected error in sbUpsert on ${this.tableName}:`, e);
+    }
   }
 
   private async sbDelete(id: string) {
     if (!supabase) return;
-    const { error } = await supabase.from(this.tableName).delete().eq("id", id);
-    if (error) console.error(`[Supabase] delete error on ${this.tableName}:`, error.message);
+    try {
+      const { error } = await supabase.from(this.tableName).delete().eq("id", id);
+      if (error) console.error(`[Supabase] delete error on ${this.tableName}:`, error.message);
+    } catch (e) {
+      console.error(`[Supabase] unexpected error in sbDelete on ${this.tableName}:`, e);
+    }
   }
 
   // ── Public API ──
@@ -133,7 +240,7 @@ export class Collection<T extends { id: string }> {
     // sync to Supabase in background
     if (supabase) {
       Promise.all(items.map((item) =>
-        supabase!.from(this.tableName).upsert(toSnake(item as unknown as Record<string, unknown>))
+        supabase!.from(this.tableName).upsert(toSnake(item as unknown as Record<string, unknown>, this.tableName))
       )).catch(() => { /* ignore */ });
     }
   }
@@ -187,9 +294,15 @@ export class Collection<T extends { id: string }> {
     try {
       const { data, error } = await supabase.from(this.tableName).select("*");
       if (error || !data) return;
-      const items = data.map((row) => toCamel(row as Record<string, unknown>) as unknown as T);
+      const items = data.map((row) => toCamel(row as Record<string, unknown>, this.tableName) as unknown as T);
       if (items.length > 0) {
-        this.lsSet(items, true);
+        // Merge with existing items so newly created local records (like user/profile/application)
+        // are not wiped out before they are synced to Supabase
+        const existing = this.lsAll();
+        const mergedMap = new Map<string, T>();
+        for (const item of existing) mergedMap.set(item.id, item);
+        for (const item of items) mergedMap.set(item.id, item);
+        this.lsSet(Array.from(mergedMap.values()), true);
       }
     } catch { /* ignore */ }
   }
@@ -209,7 +322,21 @@ export const db = {
 };
 
 export function getSettings(): Settings {
-  return db.settings.all()[0] as Settings;
+  const all = db.settings.all();
+  if (all.length > 0) return all[0] as Settings;
+  return {
+    id: "settings_main",
+    collegeName: "Mumbai Metropolitan College",
+    collegeAddress: "LBS Marg, Mulund West, Mumbai 400080",
+    collegeEmail: "transport@mmc.edu.in",
+    collegePhone: "+91 22 2560 1234",
+    adminName: "Transport Office",
+    adminEmail: "admin@demo.com",
+    validityDays: { monthly: 30, quarterly: 90, "half-yearly": 180, yearly: 365 },
+    fees: { monthly: 450, quarterly: 1250, "half-yearly": 2400, yearly: 4500 },
+    instructions: "Keep your college ID card, admission proof and a passport-size photo ready.",
+    counters: { app: 0, pass: 0 },
+  };
 }
 
 export const meta = {

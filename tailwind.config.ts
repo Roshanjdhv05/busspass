@@ -15,6 +15,21 @@ const config: Config = {
         lift: "0 2px 4px rgba(15,74,52,.06), 0 18px 40px -16px rgba(15,74,52,.28)",
       },
       screens: { xs: "380px" },
+      keyframes: {
+        check: {
+          "0%": { strokeDasharray: "0 100", opacity: "0" },
+          "60%": { opacity: "1" },
+          "100%": { strokeDasharray: "100 0", opacity: "1" },
+        },
+        "scale-in": {
+          "0%": { transform: "scale(0.6)", opacity: "0" },
+          "100%": { transform: "scale(1)", opacity: "1" },
+        },
+      },
+      animation: {
+        check: "check 0.5s ease-out forwards",
+        "scale-in": "scale-in 0.3s cubic-bezier(0.34,1.56,0.64,1) forwards",
+      },
     },
   },
   plugins: [],

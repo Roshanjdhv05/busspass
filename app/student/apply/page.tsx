@@ -144,7 +144,7 @@ function Apply() {
     setBusy(true);
     setTimeout(() => {
       try {
-        if (form.profilePhoto) db.studentProfiles.update(profile.id, { photoKey: form.profilePhoto });
+        if (form.profilePhoto && profile.id) db.studentProfiles.update(profile.id, { photoKey: form.profilePhoto });
         const { app } = submitApplication({
           userId: user.id, studentProfileId: profile.id, fullName: form.fullName.trim(),
           studentId: form.studentId.trim().toUpperCase(), college: form.college.trim(),
@@ -162,7 +162,10 @@ function Apply() {
         });
         setDone({ app });
         setShowSuccess(true);
-      } catch (ex) { toast(ex instanceof Error ? ex.message : "Could not submit", "error"); }
+      } catch (ex) {
+        console.error("Submit application error:", ex);
+        toast(ex instanceof Error ? ex.message : "Could not submit", "error");
+      }
       setBusy(false);
     }, 600);
   };
@@ -213,8 +216,13 @@ function Apply() {
     );
   }
 
-  const fee = form.passType ? settings.fees[form.passType] : 0;
-  const days = form.passType ? settings.validityDays[form.passType] : 0;
+  const defaultValidity: Record<PassType, number> = { monthly: 30, quarterly: 90, "half-yearly": 180, yearly: 365 };
+  const defaultFees: Record<PassType, number> = { monthly: 450, quarterly: 1250, "half-yearly": 2400, yearly: 4500 };
+  const validityDays = settings?.validityDays ?? defaultValidity;
+  const fees = settings?.fees ?? defaultFees;
+
+  const fee = form.passType ? (fees[form.passType] ?? 0) : 0;
+  const days = form.passType ? (validityDays[form.passType] ?? 0) : 0;
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -275,7 +283,7 @@ function Apply() {
                   {PASS_TYPES.map((t) => (
                     <button key={t.value} type="button" role="radio" aria-checked={form.passType === t.value} onClick={() => set("passType", t.value)}
                       className={cn("relative rounded-2xl border p-3 text-left transition", form.passType === t.value ? "border-forest-600 bg-mint-50 ring-2 ring-forest-100" : "border-forest-100 bg-white")}>
-                      <div className="text-sm font-bold">{t.label}</div><div className="text-xs text-ink-mute">{settings.validityDays[t.value]} days</div><div className="mt-1 text-sm font-extrabold text-forest-700">₹{settings.fees[t.value].toLocaleString("en-IN")}</div>
+                      <div className="text-sm font-bold">{t.label}</div><div className="text-xs text-ink-mute">{(validityDays[t.value] ?? 30)} days</div><div className="mt-1 text-sm font-extrabold text-forest-700">₹{(fees[t.value] ?? 0).toLocaleString("en-IN")}</div>
                       {form.passType === t.value && <Check size={16} className="absolute right-3 top-3 text-forest-600" />}
                     </button>
                   ))}

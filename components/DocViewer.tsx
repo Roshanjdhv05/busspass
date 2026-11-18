@@ -34,7 +34,7 @@ export function DocViewer({ fileKey, label, onClose }: { fileKey: string; label:
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[60] flex flex-col bg-black/90"
+      className="fixed inset-0 z-[120] flex flex-col bg-black/95 backdrop-blur-md"
       onClick={onClose}
     >
       {/* Top bar */}

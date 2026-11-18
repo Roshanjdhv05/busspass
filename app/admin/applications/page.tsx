@@ -1,7 +1,9 @@
 "use client";
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
-import { ClipboardList, Eye, Search } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { Check, ClipboardList, Search } from "lucide-react";
 import { useCollection } from "@/hooks/useData";
 import { db } from "@/lib/storage";
 import ApplicationDetail from "@/components/ApplicationDetail";
@@ -27,6 +29,8 @@ function Inner() {
   const [from, setFrom] = useState(""); const [to, setTo] = useState("");
   const [sort, setSort] = useState("newest");
   const [view, setView] = useState<string | null>(null);
+  const [approvedPassId, setApprovedPassId] = useState<string | null>(null);
+  const [approvedAppId, setApprovedAppId] = useState<string | null>(null);
 
   const list = useMemo(() => {
     const n = q.trim().toLowerCase();
@@ -85,47 +89,131 @@ function Inner() {
         ? <Card><EmptyState icon={ClipboardList} title="No applications match" text="Try clearing filters or searching a different term." /></Card>
         : (
           <>
+            {/* Desktop table — full row is clickable */}
             <Card className="hidden overflow-hidden md:block">
               <table className="w-full text-left text-sm">
                 <thead className="bg-forest-50 text-xs uppercase tracking-wide text-ink-soft">
-                  <tr>{["Application", "Student", "Route", "Pass type", "Date", "Status", ""].map((h) => <th key={h} className="px-4 py-3 font-semibold">{h}</th>)}</tr>
+                  <tr>{["Application", "Student", "Route", "Pass type", "Date", "Status"].map((h) => <th key={h} className="px-4 py-3 font-semibold">{h}</th>)}</tr>
                 </thead>
                 <tbody className="divide-y divide-forest-50">
                   {list.map((a) => (
-                    <tr key={a.id} className="hover:bg-forest-50/40">
-                      <td className="px-4 py-3 font-bold">{a.id}</td>
-                      <td className="px-4 py-3"><div className="font-semibold">{a.fullName}</div><div className="text-xs text-ink-mute">{a.studentId}</div></td>
+                    <tr
+                      key={a.id}
+                      onClick={() => setView(a.id)}
+                      className="cursor-pointer transition-colors hover:bg-forest-50 active:bg-forest-100"
+                    >
+                      <td className="px-4 py-3 font-bold text-forest-700">{a.id}</td>
+                      <td className="px-4 py-3">
+                        <div className="font-semibold">{a.fullName}</div>
+                        <div className="text-xs text-ink-mute">{a.studentId}</div>
+                      </td>
                       <td className="px-4 py-3">{routeNo(a.routeId)}</td>
                       <td className="px-4 py-3">{passTypeLabel(a.passType)}</td>
                       <td className="whitespace-nowrap px-4 py-3">{fmtDate(a.submittedAt)}</td>
                       <td className="px-4 py-3"><StatusBadge status={a.status} /></td>
-                      <td className="px-4 py-3 text-right">
-                        <button onClick={() => setView(a.id)} aria-label={`View ${a.id}`}
-                          className="flex h-9 w-9 items-center justify-center rounded-lg text-forest-700 hover:bg-forest-100 ml-auto">
-                          <Eye size={17} />
-                        </button>
-                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </Card>
+
+            {/* Mobile cards — also fully clickable */}
             <div className="space-y-3 md:hidden">
               {list.map((a) => (
-                <Card key={a.id} className="p-4">
+                <Card key={a.id} className="cursor-pointer p-4 transition-colors hover:bg-forest-50 active:bg-forest-100"
+                  onClick={() => setView(a.id)}>
                   <div className="flex items-center justify-between"><span className="font-extrabold">{a.id}</span><StatusBadge status={a.status} /></div>
                   <div className="mt-1.5 text-sm font-semibold">{a.fullName} <span className="font-normal text-ink-mute">· {a.studentId}</span></div>
                   <div className="text-xs text-ink-mute">Route {routeNo(a.routeId)} · {passTypeLabel(a.passType)} · {fmtDate(a.submittedAt)}</div>
-                  <button onClick={() => setView(a.id)} className="mt-3 flex h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-forest-100 text-sm font-semibold text-forest-700">
-                    <Eye size={16} /> View Details
-                  </button>
                 </Card>
               ))}
             </div>
           </>
         )}
-      <ApplicationDetail id={view} onClose={() => setView(null)} />
+
+      <ApplicationDetail
+        id={view}
+        onClose={() => setView(null)}
+        onApproved={(appId, passId) => {
+          setView(null);
+          setApprovedAppId(appId);
+          setApprovedPassId(passId);
+        }}
+      />
+
+      {/* Centered approval success overlay */}
+      <AnimatePresence>
+        {approvedPassId && approvedAppId && (
+          <ApprovalSuccess
+            appId={approvedAppId}
+            passId={approvedPassId}
+            onClose={() => { setApprovedPassId(null); setApprovedAppId(null); }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
+
+function ApprovalSuccess({ appId, passId, onClose }: { appId: string; passId: string; onClose: () => void }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      {/* backdrop */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      {/* card */}
+      <motion.div
+        initial={{ scale: 0.85, opacity: 0, y: 16 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.85, opacity: 0, y: 16 }}
+        transition={{ type: "spring", damping: 25, stiffness: 300 }}
+        className="relative z-10 w-full max-w-sm rounded-3xl bg-white p-8 shadow-2xl text-center"
+      >
+        {/* animated checkmark circle */}
+        <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full bg-mint-100 text-forest-700 shadow-lift">
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ type: "spring", delay: 0.1, stiffness: 200, damping: 15 }}
+            className="flex h-14 w-14 items-center justify-center rounded-full bg-forest-600 text-white"
+          >
+            <Check size={32} strokeWidth={3} />
+          </motion.div>
+        </div>
+
+        <h2 className="text-2xl font-extrabold text-ink">Application Approved!</h2>
+        <p className="mt-1.5 text-sm text-ink-mute">The pass has been generated and the student has been notified.</p>
+
+        <div className="mt-5 space-y-2 rounded-2xl border border-forest-100 bg-forest-50 p-4 text-left">
+          <div className="flex justify-between text-sm">
+            <span className="text-ink-mute">Application</span>
+            <span className="font-bold text-forest-800">{appId}</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-ink-mute">Pass Issued</span>
+            <span className="font-bold text-forest-800">{passId}</span>
+          </div>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="mt-6 w-full rounded-2xl bg-forest-700 py-3 text-sm font-bold text-white shadow-lift hover:bg-forest-800 transition active:scale-[0.99]"
+        >
+          Done
+        </button>
+      </motion.div>
+    </div>,
+    document.body
+  );
+}
+
 export default function Page() { return <Suspense fallback={<PageSkeleton />}><Inner /></Suspense>; }

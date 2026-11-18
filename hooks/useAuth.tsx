@@ -22,23 +22,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
+    let mounted = true;
     const init = async () => {
       try {
         seedIfNeeded();
-        // If Supabase is configured, sync all data first so we have the latest users
+        // Immediately restore session synchronously from localStorage so page reload doesn't kick user out
+        const sid = meta.get("session");
+        if (sid) {
+          const u = db.users.get(sid);
+          if (u && mounted) setUser(u);
+        }
+
+        // If Supabase is configured, sync background data
         if (isSupabaseConfigured()) {
           await syncAllFromSupabase();
+          // After sync, re-verify session in case user was updated in DB
+          if (mounted) {
+            const freshSid = meta.get("session");
+            if (freshSid) {
+              const freshUser = db.users.get(freshSid);
+              if (freshUser) setUser(freshUser);
+            }
+          }
         }
         runExpirySweep();
-        const sid = meta.get("session");
-        const u = sid ? db.users.get(sid) : undefined;
-        setUser(u ?? null);
       } catch (e) {
         console.error("Init failed", e);
+      } finally {
+        if (mounted) setReady(true);
       }
-      setReady(true);
     };
     init();
+    return () => { mounted = false; };
   }, []);
 
   const login: AuthCtx["login"] = useCallback(async (email, password, role) => {
@@ -64,8 +79,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Upsert into localStorage so the session works
         const existing = db.users.get(sbUser.id);
         const user: User = {
-          id: sbUser.id, email: sbUser.email, password: sbUser.password,
-          role: sbUser.role, name: sbUser.name, createdAt: sbUser.created_at,
+          id: String(sbUser.id ?? ""),
+          email: String(sbUser.email ?? ""),
+          password: String(sbUser.password ?? ""),
+          role: (sbUser.role as "student" | "admin") ?? "student",
+          name: String(sbUser.name ?? ""),
+          createdAt: String(sbUser.created_at ?? new Date().toISOString()),
         };
         if (!existing) {
           db.users.add(user);

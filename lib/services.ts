@@ -24,8 +24,10 @@ export function clearNotifications(audience: string) {
 // ------------------------------------------------------------------ ids
 function nextCounter(kind: "app" | "pass"): number {
   const s = getSettings();
-  const next = (s.counters?.[kind] ?? 0) + 1;
-  db.settings.update(s.id, { counters: { ...s.counters, [kind]: next } });
+  const next = (s?.counters?.[kind] ?? 0) + 1;
+  if (s) {
+    db.settings.update(s.id, { counters: { ...(s.counters ?? { app: 0, pass: 0 }), [kind]: next } });
+  }
   return next;
 }
 export function newApplicationId(): string {
@@ -117,10 +119,12 @@ export function submitApplication(draft: ApplicationDraft): { app: Application }
   };
   db.applications.add(app);
   // keep the profile in sync with the latest details
-  db.studentProfiles.update(draft.studentProfileId, {
-    fullName: draft.fullName, studentId: draft.studentId, college: draft.college, course: draft.course, year: draft.year,
-    mobile: draft.mobile, email: draft.email,
-  });
+  if (draft.studentProfileId) {
+    db.studentProfiles.update(draft.studentProfileId, {
+      fullName: draft.fullName, studentId: draft.studentId, college: draft.college, course: draft.course, year: draft.year,
+      mobile: draft.mobile, email: draft.email,
+    });
+  }
   notify({ audience: draft.userId, type: "submitted", title: "Application submitted", message: `Your application ${appId} is under review. We'll notify you once approved.`, link: `/student/applications/${appId}` });
   notify({ audience: "admin", type: "submitted", title: "New application", message: `${draft.fullName} applied for a ${draft.passType} pass. Review now.`, link: "/admin/applications" });
   return { app };

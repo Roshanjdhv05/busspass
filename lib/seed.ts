@@ -6,7 +6,7 @@ import type {
 } from "./types";
 import { addDays, DAY } from "./utils";
 
-const SEED_VERSION = "6";
+const SEED_VERSION = "7";
 const COLLEGE = "Mumbai Metropolitan College";
 
 interface RouteSeed {
@@ -18,6 +18,7 @@ interface RouteSeed {
 const CAMPUS: [string, number, number] = ["Mulund Campus Gate", 19.1722, 72.9565];
 
 const ROUTES: RouteSeed[] = [
+  // ── Routes TO campus ──────────────────────────────────────────────────────
   {
     id: "route_12a", number: "12A", name: "Andheri – Mulund Campus via Powai", start: "Andheri Station", end: "Mulund Campus",
     description: "Express college service from Andheri (W) via JVLR and Powai to the Mulund campus. Runs every 20 minutes between 6:30 and 9:30 AM.",
@@ -121,6 +122,146 @@ const ROUTES: RouteSeed[] = [
       ["Airoli Circle", 19.1575, 72.9988],
       ["Mulund Check Naka", 19.1776, 72.9604],
       CAMPUS,
+    ],
+  },
+
+  // ── Additional routes with new destinations ────────────────────────────────
+  {
+    id: "route_7p", number: "7P", name: "Dombivli – Mulund Campus via Kalyan", start: "Dombivli Station", end: "Mulund Campus",
+    description: "Serves students from Dombivli and Kalyan area via Ambernath Road.",
+    distanceKm: 30, durationMin: 70, color: "#059669",
+    stops: [
+      ["Dombivli Station", 19.2165, 73.0862],
+      ["Dombivli East", 19.2200, 73.0900],
+      ["Kalyan Junction", 19.2403, 73.1305],
+      ["Kalyan West", 19.2438, 73.1183],
+      ["Bhiwandi Naka", 19.2900, 73.0590],
+      ["Thane Station", 19.1860, 72.9758],
+      ["Kapurbawdi", 19.1830, 72.9610],
+      ["Mulund Check Naka", 19.1776, 72.9604],
+      CAMPUS,
+    ],
+  },
+  {
+    id: "route_3g", number: "3G", name: "Ghatkopar – Mulund Campus via Vikhroli", start: "Ghatkopar Station", end: "Mulund Campus",
+    description: "Short eastbound route for students living near Ghatkopar and Vikhroli.",
+    distanceKm: 14, durationMin: 35, color: "#EA580C",
+    stops: [
+      ["Ghatkopar Station", 19.0860, 72.9081],
+      ["Ghatkopar East", 19.0864, 72.9180],
+      ["R-City Mall", 19.0870, 72.9150],
+      ["Vikhroli Station", 19.1117, 72.9279],
+      ["Vikhroli East", 19.1049, 72.9339],
+      ["Bhandup West", 19.1380, 72.9360],
+      ["Bhandup Pumping", 19.1436, 72.9402],
+      CAMPUS,
+    ],
+  },
+  {
+    id: "route_2n", number: "2N", name: "Navi Mumbai – Thane Station", start: "CBD Belapur", end: "Thane Station",
+    description: "Connects CBD Belapur and Nerul with Thane station, stopping at key Navi Mumbai landmarks.",
+    distanceKm: 22, durationMin: 50, color: "#BE185D",
+    stops: [
+      ["CBD Belapur", 19.0218, 73.0398],
+      ["Sector 11 Belapur", 19.0230, 73.0410],
+      ["Nerul Station", 19.0345, 73.0164],
+      ["Palm Beach Road", 19.0520, 72.9988],
+      ["Turbhe MIDC", 19.0960, 73.0070],
+      ["Ghansoli Station", 19.1200, 73.0100],
+      ["Airoli Bridge", 19.1575, 72.9988],
+      ["Thane Station", 19.1860, 72.9758],
+    ],
+  },
+  {
+    id: "route_6k", number: "6K", name: "Kurla – Thane via Eastern Express Highway", start: "Kurla Station", end: "Thane Station",
+    description: "High-frequency service along the Eastern Express Highway connecting Kurla, Ghatkopar and Thane.",
+    distanceKm: 18, durationMin: 40, color: "#0F766E",
+    stops: [
+      ["Kurla Station", 19.0728, 72.8842],
+      ["Kurla West", 19.0694, 72.8793],
+      ["Vidyavihar", 19.0820, 72.8990],
+      ["Ghatkopar Station", 19.0860, 72.9081],
+      ["Vikhroli Station", 19.1117, 72.9279],
+      ["Kanjurmarg Station", 19.1306, 72.9296],
+      ["Bhandup Complex", 19.1510, 72.9450],
+      ["Mulund Check Naka", 19.1776, 72.9604],
+      ["Thane Station", 19.1860, 72.9758],
+    ],
+  },
+  {
+    id: "route_8b", number: "8B", name: "Bandra – Dadar via Western Suburbs", start: "Bandra Station", end: "Dadar Station",
+    description: "Western suburb connector linking Bandra, Santacruz and Vile Parle to Dadar terminus.",
+    distanceKm: 12, durationMin: 35, color: "#7C2D12",
+    stops: [
+      ["Bandra Station", 19.0544, 72.8406],
+      ["Bandra East", 19.0540, 72.8420],
+      ["Santacruz Station", 19.0820, 72.8440],
+      ["Santacruz East", 19.0810, 72.8520],
+      ["Vile Parle East", 19.0990, 72.8597],
+      ["Vile Parle West", 19.1000, 72.8490],
+      ["Andheri Station", 19.1197, 72.8464],
+      ["Dadar Station", 19.0218, 72.8456],
+    ],
+  },
+  {
+    id: "route_4c", number: "4C", name: "Chembur – Mulund Campus via Ghatkopar", start: "Chembur Station", end: "Mulund Campus",
+    description: "Connects Chembur and Govandi residents to the campus via Ghatkopar flyover.",
+    distanceKm: 20, durationMin: 48, color: "#6D28D9",
+    stops: [
+      ["Chembur Station", 19.0620, 72.8990],
+      ["Govandi Station", 19.0580, 72.9188],
+      ["Mankhurd", 19.0520, 72.9280],
+      ["Ghatkopar Station", 19.0860, 72.9081],
+      ["Ghatkopar East", 19.0864, 72.9180],
+      ["Vikhroli Pipeline Road", 19.1049, 72.9339],
+      ["Kanjurmarg Station", 19.1306, 72.9296],
+      ["Bhandup Pumping", 19.1436, 72.9402],
+      CAMPUS,
+    ],
+  },
+  {
+    id: "route_11m", number: "11M", name: "Mira Road – Borivali via SV Road", start: "Mira Road Station", end: "Borivali Station",
+    description: "Serves students from Mira-Bhayandar area to Borivali where they can interchange for campus routes.",
+    distanceKm: 16, durationMin: 40, color: "#155E75",
+    stops: [
+      ["Mira Road Station", 19.2860, 72.8703],
+      ["Mira Road East", 19.2820, 72.8750],
+      ["Bhayandar Station", 19.3012, 72.8512],
+      ["Bhayandar East", 19.3000, 72.8560],
+      ["Naigaon Station", 19.3611, 72.8455],
+      ["Vasai Road Station", 19.3744, 72.8363],
+      ["Dahisar Station", 19.2503, 72.8530],
+      ["Borivali Station", 19.2291, 72.8573],
+    ],
+  },
+  {
+    id: "route_15w", number: "15W", name: "Worli – Mulund via Sion", start: "Worli Bus Depot", end: "Mulund Campus",
+    description: "South Mumbai route for students from Worli, Prabhadevi and Dadar connecting via Sion.",
+    distanceKm: 32, durationMin: 70, color: "#B45309",
+    stops: [
+      ["Worli Bus Depot", 19.0120, 72.8197],
+      ["Prabhadevi", 19.0110, 72.8268],
+      ["Dadar Station", 19.0218, 72.8456],
+      ["Sion Circle", 19.0390, 72.8619],
+      ["Chembur Station", 19.0620, 72.8990],
+      ["Ghatkopar East", 19.0864, 72.9180],
+      ["Vikhroli Station", 19.1117, 72.9279],
+      ["Bhandup Complex", 19.1510, 72.9450],
+      CAMPUS,
+    ],
+  },
+  {
+    id: "route_16k", number: "16K", name: "Kharghar – Vashi Circular", start: "Kharghar Sector 7", end: "Vashi Station",
+    description: "Circular Navi Mumbai route connecting Kharghar, Belapur and Nerul to Vashi.",
+    distanceKm: 18, durationMin: 45, color: "#4F46E5",
+    stops: [
+      ["Kharghar Sector 7", 19.0430, 73.0680],
+      ["Kharghar Central Park", 19.0510, 73.0629],
+      ["Belapur Station", 19.0218, 73.0398],
+      ["Nerul Station", 19.0345, 73.0164],
+      ["Sanpada", 19.0588, 73.0083],
+      ["Juinagar", 19.0470, 73.0033],
+      ["Vashi Station", 19.0745, 72.9986],
     ],
   },
 ];
