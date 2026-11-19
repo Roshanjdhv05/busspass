@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { db, meta, syncAllFromSupabase } from "@/lib/storage";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import { seedIfNeeded } from "@/lib/seed";
-import { runExpirySweep } from "@/lib/services";
+import { runExpirySweep, syncProfileDocumentsToSupabase } from "@/lib/services";
 import type { Role, User } from "@/lib/types";
 import { PageLoader } from "@/components/PageLoader";
 
@@ -124,6 +124,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           meta.set("session", user.id);
           setUser(user);
+          // Silently upload any IDB-local document files to Supabase Storage in background
+          if (user.role === "student") {
+            syncProfileDocumentsToSupabase(user.id).catch(() => {/* ignore upload errors */});
+          }
           return { ok: true, user };
         }
       } catch (err) {
@@ -140,6 +144,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     meta.set("session", u.id);
     setUser(u);
+    // Silently upload any IDB-local document files to Supabase Storage in background
+    if (u.role === "student") {
+      syncProfileDocumentsToSupabase(u.id).catch(() => {/* ignore */});
+    }
     return { ok: true, user: u };
   }, []);
 

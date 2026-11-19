@@ -9,6 +9,7 @@ import {
   Eye,
   FileCheck,
   FileText,
+  Loader2,
   Mail,
   MapPin,
   Maximize2,
@@ -16,6 +17,7 @@ import {
   Route as RouteIcon,
   ScanSearch,
   Ticket,
+  Upload,
   X,
   XCircle,
 } from "lucide-react";
@@ -26,7 +28,9 @@ import { db } from "@/lib/storage";
 import { approveApplication, rejectApplication, startReview } from "@/lib/services";
 import { useToast } from "@/hooks/useToast";
 import { fmtDateTime, passTypeLabel } from "@/lib/utils";
-import type { Application } from "@/lib/types";
+import { getDocumentFallbackUrl, StudentDocInfo } from "@/lib/document-preview";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import type { Application, StudentProfile } from "@/lib/types";
 
 interface Props {
   id: string | null;
@@ -38,21 +42,26 @@ interface Props {
 function DocumentCard({
   label,
   fileKey,
+  student,
   onOpen,
+  onUpload,
 }: {
   label: string;
   fileKey?: string;
+  student?: StudentDocInfo;
   onOpen: (url: string, name: string) => void;
+  onUpload?: (file: File) => Promise<void>;
 }) {
   const { url, type, name, loading } = useFileUrl(fileKey);
-  const isImg = type?.startsWith("image/") || (url && !type?.includes("pdf"));
+  const [uploading, setUploading] = useState(false);
+  const fallbackUrl = getDocumentFallbackUrl(label, student || {});
+  const displayUrl = url || fallbackUrl;
+  const isPdf = type === "application/pdf" || (displayUrl.startsWith("http") && displayUrl.toLowerCase().endsWith(".pdf"));
 
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (url) {
-      onOpen(url, name ?? label);
-    }
+    onOpen(displayUrl, name ?? label);
   };
 
   return (
@@ -63,12 +72,38 @@ function DocumentCard({
       onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && handleClick(e as unknown as React.MouseEvent)}
       className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-forest-100 bg-white p-2.5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-forest-400 hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 focus:ring-forest-500"
     >
-      {/* Top Label */}
+      {/* Top Label & Quick Actions */}
       <div className="flex items-center justify-between gap-1 mb-1.5 px-0.5">
         <span className="text-[11px] font-bold text-forest-900 truncate">{label}</span>
-        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-forest-50 text-forest-700 transition group-hover:bg-forest-600 group-hover:text-white">
-          <Maximize2 size={11} />
-        </span>
+        <div className="flex items-center gap-1">
+          {onUpload && (
+            <label
+              onClick={(e) => e.stopPropagation()}
+              title="Upload / Replace File"
+              className="flex h-5 w-5 cursor-pointer items-center justify-center rounded-full bg-forest-50 text-forest-700 transition hover:bg-forest-600 hover:text-white"
+            >
+              {uploading ? <Loader2 size={10} className="animate-spin" /> : <Upload size={10} />}
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                hidden
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  setUploading(true);
+                  try {
+                    await onUpload(f);
+                  } finally {
+                    setUploading(false);
+                  }
+                }}
+              />
+            </label>
+          )}
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-forest-50 text-forest-700 transition group-hover:bg-forest-600 group-hover:text-white">
+            <Maximize2 size={11} />
+          </span>
+        </div>
       </div>
 
       {/* Image / Thumbnail Container */}
@@ -77,24 +112,19 @@ function DocumentCard({
           <div className="flex items-center gap-1.5 text-xs text-ink-mute animate-pulse">
             <span className="h-2 w-2 rounded-full bg-forest-500 animate-ping" /> Loading…
           </div>
-        ) : url && isImg ? (
+        ) : !isPdf ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={url}
+            src={displayUrl}
             alt={label}
             className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
           />
-        ) : url ? (
+        ) : (
           <div className="flex flex-col items-center gap-1.5 text-forest-700 p-2 text-center">
             <FileText size={28} className="text-forest-600" />
             <span className="text-[10px] font-semibold text-ink-mute truncate max-w-full">
               {name ?? label}
             </span>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center gap-1 text-forest-700 p-2 text-center">
-            <FileCheck size={26} className="text-forest-600" />
-            <span className="text-[10px] font-semibold text-ink-mute">Document on file</span>
           </div>
         )}
 
@@ -127,6 +157,8 @@ function LightboxModal({
     return () => window.removeEventListener("keydown", handleKey);
   }, [onClose]);
 
+  const isPdf = url.startsWith("http") && url.toLowerCase().endsWith(".pdf");
+
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex flex-col bg-black/90 backdrop-blur-md animate-[fadeIn_0.2s_ease-out]">
       {/* Top Header Bar */}
@@ -141,7 +173,7 @@ function LightboxModal({
             href={url}
             target="_blank"
             rel="noreferrer"
-            download
+            download={`${title.toLowerCase().replace(/\s+/g, "_")}.svg`}
             className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/20"
           >
             <Download size={14} /> Open / Save
@@ -156,18 +188,26 @@ function LightboxModal({
         </div>
       </div>
 
-      {/* Main Image View */}
+      {/* Main Document View */}
       <div
         className="flex flex-1 items-center justify-center p-4 sm:p-8 overflow-auto cursor-zoom-out"
         onClick={onClose}
       >
-        <div onClick={(e) => e.stopPropagation()} className="relative max-h-full max-w-full">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={url}
-            alt={title}
-            className="max-h-[82vh] max-w-[90vw] rounded-2xl object-contain shadow-2xl ring-1 ring-white/10"
-          />
+        <div onClick={(e) => e.stopPropagation()} className="relative max-h-full max-w-full flex items-center justify-center">
+          {!isPdf ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={url}
+              alt={title}
+              className="max-h-[82vh] max-w-[90vw] rounded-2xl object-contain shadow-2xl ring-1 ring-white/10"
+            />
+          ) : (
+            <iframe
+              src={url}
+              title={title}
+              className="h-[80vh] w-[85vw] max-w-5xl rounded-2xl bg-white shadow-2xl"
+            />
+          )}
         </div>
       </div>
     </div>,
@@ -226,13 +266,87 @@ export default function ApplicationDetail({ id, onClose, onApproved }: Props) {
     close();
   };
 
+  const studentInfo: StudentDocInfo = {
+    name: a.fullName,
+    studentId: a.studentId,
+    college: a.college,
+    course: a.course,
+    year: a.year,
+    mobile: a.mobile,
+    email: a.email,
+  };
+
+  const handleUploadDoc = async (docLabel: string, file: File) => {
+    toast(`Uploading ${docLabel}…`, "info");
+    try {
+      const ext = file.name.split(".").pop() || "jpg";
+      const path = `users/${a.userId}/${Date.now()}_${ext}`;
+      if (isSupabaseConfigured() && supabase) {
+        const { error: upErr } = await supabase.storage.from("documents").upload(path, file, {
+          contentType: file.type,
+          upsert: true,
+        });
+        if (upErr) throw upErr;
+        const { data } = supabase.storage.from("documents").getPublicUrl(path);
+        const publicUrl = data.publicUrl;
+
+        // Map to student_profiles columns
+        const profColMap: Record<string, string> = {
+          "Passport Photo": "photo_key",
+          "Student ID Card": "id_card_key",
+          "Aadhar Card": "aadhar_key",
+          "PAN Card": "pan_key",
+          "Admission / Bonafide": "admission_key",
+        };
+        const profPropMap: Record<string, keyof StudentProfile> = {
+          "Passport Photo": "photoKey",
+          "Student ID Card": "idCardKey",
+          "Aadhar Card": "aadharKey",
+          "PAN Card": "panKey",
+          "Admission / Bonafide": "admissionKey",
+        };
+
+        if (a.studentProfileId && profColMap[docLabel]) {
+          await supabase.from("student_profiles").update({ [profColMap[docLabel]]: publicUrl }).eq("id", a.studentProfileId);
+          db.studentProfiles.update(a.studentProfileId, { [profPropMap[docLabel]]: publicUrl });
+        }
+
+        const appColMap: Record<string, string> = {
+          "Passport Photo": "doc_photo",
+          "Student ID Card": "doc_student_id_card",
+          "Admission / Bonafide": "doc_admission_proof",
+        };
+        const appPropMap: Record<string, "photo" | "studentIdCard" | "admissionProof"> = {
+          "Passport Photo": "photo",
+          "Student ID Card": "studentIdCard",
+          "Admission / Bonafide": "admissionProof",
+        };
+
+        if (appColMap[docLabel]) {
+          await supabase.from("applications").update({ [appColMap[docLabel]]: publicUrl }).eq("id", a.id);
+          db.applications.update(a.id, {
+            documents: { ...(a.documents || {}), [appPropMap[docLabel]]: publicUrl },
+          });
+        }
+        toast(`✅ ${docLabel} uploaded successfully`);
+      } else {
+        toast("Cloud storage not configured", "error");
+      }
+    } catch (e) {
+      console.error("Upload error:", e);
+      toast("Could not upload document", "error");
+    }
+  };
+
   const docs = [
     { label: "Passport Photo", key: a.documents.photo ?? profile?.photoKey },
     { label: "Student ID Card", key: a.documents.studentIdCard ?? profile?.idCardKey },
     { label: "Aadhar Card", key: profile?.aadharKey },
     { label: "PAN Card", key: profile?.panKey },
-    { label: "Admission / Bonafide", key: a.documents.admissionProof ?? profile?.admissionKey },
-  ].filter((d) => d.key);
+    ...(a.documents.admissionProof || profile?.admissionKey
+      ? [{ label: "Admission / Bonafide", key: a.documents.admissionProof ?? profile?.admissionKey }]
+      : []),
+  ];
 
   const content = (
     <AnimatePresence>
@@ -370,7 +484,9 @@ export default function ApplicationDetail({ id, onClose, onApproved }: Props) {
                       key={d.label}
                       label={d.label}
                       fileKey={d.key}
+                      student={studentInfo}
                       onOpen={(url, title) => setLightbox({ url, title })}
+                      onUpload={(file) => handleUploadDoc(d.label, file)}
                     />
                   ))}
                 </div>

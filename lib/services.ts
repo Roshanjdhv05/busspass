@@ -344,3 +344,82 @@ export function issueTicket(draft: TicketDraft): BusTicket {
   notify({ audience: draft.userId, type: "pass", title: "Ticket issued!", message: `Ticket ${ticket.id} — ${draft.fromStopName} → ${draft.toStopName}. Valid for 24 hours.`, link: "/student/tickets" });
   return ticket;
 }
+
+// ------------------------------------------------------------------ document cloud sync
+/**
+ * Called silently after student login.
+ * Finds any document keys that are still plain IDB keys (not https:// URLs),
+ * uploads the files to Supabase Storage, then updates the profile and all
+ * related applications in both localStorage and Supabase so the admin can view
+ * the photos from any browser/device.
+ */
+export async function syncProfileDocumentsToSupabase(userId: string): Promise<void> {
+  if (!isSupabaseConfigured() || !supabase) return;
+  const profile = db.studentProfiles.all().find((p) => p.userId === userId);
+  if (!profile) return;
+
+  const folder = `users/${userId}`;
+  const isUrl = (k?: string) => !k || k.startsWith("http://") || k.startsWith("https://");
+
+  // Only upload keys that aren't already cloud URLs
+  const needsUpload = !isUrl(profile.photoKey) || !isUrl(profile.aadharKey) ||
+    !isUrl(profile.panKey) || !isUrl(profile.idCardKey) || !isUrl(profile.admissionKey);
+
+  if (!needsUpload) return; // already all URLs, nothing to do
+
+  const [photoUrl, aadharUrl, panUrl, idCardUrl, admissionUrl] = await Promise.all([
+    uploadDocumentToSupabase(profile.photoKey, folder),
+    uploadDocumentToSupabase(profile.aadharKey, folder),
+    uploadDocumentToSupabase(profile.panKey, folder),
+    uploadDocumentToSupabase(profile.idCardKey, folder),
+    uploadDocumentToSupabase(profile.admissionKey, folder),
+  ]);
+
+  const updates: Partial<typeof profile> = {};
+  if (photoUrl && photoUrl !== profile.photoKey) updates.photoKey = photoUrl;
+  if (aadharUrl && aadharUrl !== profile.aadharKey) updates.aadharKey = aadharUrl;
+  if (panUrl && panUrl !== profile.panKey) updates.panKey = panUrl;
+  if (idCardUrl && idCardUrl !== profile.idCardKey) updates.idCardKey = idCardUrl;
+  if (admissionUrl && admissionUrl !== profile.admissionKey) updates.admissionKey = admissionUrl;
+
+  if (Object.keys(updates).length === 0) return;
+
+  // Update localStorage profile
+  db.studentProfiles.update(profile.id, updates);
+
+  // Update Supabase student_profiles with the new cloud URLs
+  await supabase.from("student_profiles").update({
+    ...(updates.photoKey ? { photo_key: updates.photoKey } : {}),
+    ...(updates.aadharKey ? { aadhar_key: updates.aadharKey } : {}),
+    ...(updates.panKey ? { pan_key: updates.panKey } : {}),
+    ...(updates.idCardKey ? { id_card_key: updates.idCardKey } : {}),
+    ...(updates.admissionKey ? { admission_key: updates.admissionKey } : {}),
+  }).eq("id", profile.id);
+
+  // Also update all existing applications for this user with new doc URLs
+  const myApps = db.applications.all().filter((a) => a.userId === userId);
+  for (const app of myApps) {
+    const docUpdates: Record<string, string | null> = {};
+    if (updates.photoKey && (!app.documents.photo || !isUrl(app.documents.photo))) {
+      docUpdates["doc_photo"] = updates.photoKey;
+    }
+    if (updates.idCardKey && (!app.documents.studentIdCard || !isUrl(app.documents.studentIdCard))) {
+      docUpdates["doc_student_id_card"] = updates.idCardKey;
+    }
+    if (updates.admissionKey && (!app.documents.admissionProof || !isUrl(app.documents.admissionProof))) {
+      docUpdates["doc_admission_proof"] = updates.admissionKey;
+    }
+    if (Object.keys(docUpdates).length > 0) {
+      // Update in Supabase
+      await supabase.from("applications").update(docUpdates).eq("id", app.id);
+      // Update in localStorage
+      db.applications.update(app.id, {
+        documents: {
+          photo: docUpdates["doc_photo"] ?? app.documents.photo,
+          studentIdCard: docUpdates["doc_student_id_card"] ?? app.documents.studentIdCard,
+          admissionProof: docUpdates["doc_admission_proof"] ?? app.documents.admissionProof,
+        },
+      });
+    }
+  }
+}
