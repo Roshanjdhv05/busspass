@@ -361,7 +361,7 @@ export default function Verify() {
             if (r[0]?.rawValue) {
               const detected = r[0].rawValue;
               setValue(detected);
-              verify(detected);
+              void verify(detected);
               setCam(false);
             }
           } catch {

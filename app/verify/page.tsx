@@ -192,8 +192,11 @@ function VerifyInner() {
               {result.state === "valid" && (
                 <button
                   className="w-full h-12 rounded-2xl bg-emerald-600 text-white text-sm font-black hover:bg-emerald-700 active:scale-95 transition shadow-lift"
-                  onClick={() => {
+                  onClick={async () => {
                     db.tickets.update(result.ticket.id, { used: true });
+                    if (isSupabaseConfigured() && supabase) {
+                      await supabase.from("bus_tickets").update({ used: true }).ilike("id", result.ticket.id);
+                    }
                     window.location.reload();
                   }}
                 >
