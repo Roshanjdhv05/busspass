@@ -6,11 +6,26 @@ import { compressImage, deleteFile, putFile } from "@/lib/idb";
 import { useFileUrl } from "@/hooks/useData";
 import { uid } from "@/lib/storage";
 import { cn } from "@/lib/utils";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 const MAX = 5 * 1024 * 1024;
 
-export function FileDrop({ label, hint, accept, value, onChange, error, imageOnly }: {
-  label: string; hint: string; accept: string; value?: string; onChange: (key?: string) => void; error?: string; imageOnly?: boolean;
+export function FileDrop({
+  label,
+  hint,
+  accept,
+  value,
+  onChange,
+  error,
+  imageOnly,
+}: {
+  label: string;
+  hint: string;
+  accept: string;
+  value?: string;
+  onChange: (key?: string) => void;
+  error?: string;
+  imageOnly?: boolean;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   const { url, type, name, loading } = useFileUrl(value);
@@ -28,34 +43,82 @@ export function FileDrop({ label, hint, accept, value, onChange, error, imageOnl
       const blob = await compressImage(f);
       const key = uid("file");
       await putFile(key, blob, f.name);
-      if (value) await deleteFile(value);
-      onChange(key);
-    } catch { setLocalErr("Could not save the file in your browser storage."); }
+
+      let resultKey = key;
+      // Direct cloud upload to Supabase Storage if configured
+      if (isSupabaseConfigured() && supabase) {
+        const ext = f.name.includes(".") ? f.name.split(".").pop() : (blob.type.split("/")[1] ?? "jpg");
+        const path = `uploads/${key}_${Date.now()}.${ext}`;
+        const { error: upErr } = await supabase.storage.from("documents").upload(path, blob, {
+          contentType: blob.type || f.type,
+          upsert: true,
+        });
+        if (!upErr) {
+          const { data } = supabase.storage.from("documents").getPublicUrl(path);
+          if (data?.publicUrl) {
+            resultKey = data.publicUrl;
+          }
+        } else {
+          console.warn("Supabase direct upload notice:", upErr.message);
+        }
+      }
+
+      if (value && !value.startsWith("http")) await deleteFile(value);
+      onChange(resultKey);
+    } catch {
+      setLocalErr("Could not save the file.");
+    }
     setBusy(false);
   };
 
-  const isImg = type?.startsWith("image/");
+  const isImg = type?.startsWith("image/") || (url && !type?.includes("pdf"));
   const err = localErr || error;
+
   return (
     <div>
       <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-soft">{label}</div>
       <div className={cn("flex items-center gap-3 rounded-2xl border border-dashed bg-white p-3 transition", err ? "border-red-400" : value ? "border-forest-400 bg-mint-50/60" : "border-forest-200 hover:border-forest-400")}>
         <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-forest-50 text-forest-600">
-          {busy || loading ? <Loader2 className="animate-spin" size={22} /> : url && isImg ? /* eslint-disable-next-line @next/next/no-img-element */ <img src={url} alt={label} className="h-full w-full object-cover" /> : value ? <FileText size={26} /> : <UploadCloud size={26} />}
+          {busy || loading ? (
+            <Loader2 className="animate-spin" size={22} />
+          ) : url && isImg ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img src={url} alt={label} className="h-full w-full object-cover" />
+          ) : value ? (
+            <FileText size={26} />
+          ) : (
+            <UploadCloud size={26} />
+          )}
         </div>
         <div className="min-w-0 flex-1">
           {value ? (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}><div className="flex items-center gap-1 text-sm font-semibold text-forest-700"><CheckCircle2 size={15} /> Uploaded</div><div className="truncate text-xs text-ink-mute">{name ?? "file"}</div></motion.div>
-          ) : (<><div className="text-sm font-semibold">Tap to upload</div><div className="text-xs text-ink-mute">{hint}</div></>)}
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+              <div className="flex items-center gap-1 text-sm font-semibold text-forest-700">
+                <CheckCircle2 size={15} /> Uploaded
+              </div>
+              <div className="truncate text-xs text-ink-mute">{name ?? "file"}</div>
+            </motion.div>
+          ) : (
+            <>
+              <div className="text-sm font-semibold">Tap to upload</div>
+              <div className="text-xs text-ink-mute">{hint}</div>
+            </>
+          )}
         </div>
         <input ref={ref} type="file" accept={accept} hidden onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ""; }} aria-label={label} />
         {value ? (
           <div className="flex shrink-0 gap-1">
-            <button type="button" onClick={() => ref.current?.click()} aria-label="Replace file" className="flex h-10 w-10 items-center justify-center rounded-xl text-forest-700 hover:bg-forest-50"><Replace size={18} /></button>
-            <button type="button" onClick={() => { deleteFile(value); onChange(undefined); }} aria-label="Remove file" className="flex h-10 w-10 items-center justify-center rounded-xl text-red-600 hover:bg-red-50"><X size={18} /></button>
+            <button type="button" onClick={() => ref.current?.click()} aria-label="Replace file" className="flex h-10 w-10 items-center justify-center rounded-xl text-forest-700 hover:bg-forest-50">
+              <Replace size={18} />
+            </button>
+            <button type="button" onClick={() => { if (!value.startsWith("http")) deleteFile(value); onChange(undefined); }} aria-label="Remove file" className="flex h-10 w-10 items-center justify-center rounded-xl text-red-600 hover:bg-red-50">
+              <X size={18} />
+            </button>
           </div>
         ) : (
-          <button type="button" onClick={() => ref.current?.click()} className="h-10 shrink-0 rounded-xl bg-forest-700 px-3.5 text-sm font-semibold text-white">Upload</button>
+          <button type="button" onClick={() => ref.current?.click()} className="h-10 shrink-0 rounded-xl bg-forest-700 px-3.5 text-sm font-semibold text-white">
+            Upload
+          </button>
         )}
       </div>
       {err && <div role="alert" className="mt-1 text-xs font-medium text-red-600">{err}</div>}

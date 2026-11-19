@@ -3,42 +3,98 @@
 const DB_NAME = "bpms-files";
 const STORE = "files";
 
-export interface StoredFile { key: string; blob: Blob; name: string; type: string; size: number; savedAt: string }
+export interface StoredFile {
+  key: string;
+  blob: Blob;
+  name: string;
+  type: string;
+  size: number;
+  savedAt: string;
+}
 
-function open(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    if (typeof indexedDB === "undefined") return reject(new Error("IndexedDB unavailable"));
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => {
-      if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE, { keyPath: "key" });
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+let dbPromise: Promise<IDBDatabase> | null = null;
+
+function getDb(): Promise<IDBDatabase> {
+  if (typeof indexedDB === "undefined") {
+    return Promise.reject(new Error("IndexedDB unavailable"));
+  }
+  if (!dbPromise) {
+    dbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains(STORE)) {
+          req.result.createObjectStore(STORE, { keyPath: "key" });
+        }
+      };
+      req.onsuccess = () => {
+        const d = req.result;
+        d.onversionchange = () => {
+          d.close();
+          dbPromise = null;
+        };
+        resolve(d);
+      };
+      req.onerror = () => {
+        dbPromise = null;
+        reject(req.error);
+      };
+    });
+  }
+  return dbPromise;
+}
+
+async function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+  const d = await getDb();
+  return new Promise<T>((resolve, reject) => {
+    try {
+      const t = d.transaction(STORE, mode);
+      const s = t.objectStore(STORE);
+      const r = fn(s);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+      t.onerror = () => reject(t.error);
+    } catch (e) {
+      dbPromise = null;
+      reject(e);
+    }
   });
 }
 
-function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> {
-  return open().then((d) => new Promise<T>((resolve, reject) => {
-    const t = d.transaction(STORE, mode);
-    const r = fn(t.objectStore(STORE));
-    r.onsuccess = () => resolve(r.result);
-    r.onerror = () => reject(r.error);
-    t.oncomplete = () => d.close();
-  }));
-}
-
 export async function putFile(key: string, blob: Blob, name = "file"): Promise<void> {
-  const rec: StoredFile = { key, blob, name, type: blob.type, size: blob.size, savedAt: new Date().toISOString() };
+  const rec: StoredFile = {
+    key,
+    blob,
+    name,
+    type: blob.type,
+    size: blob.size,
+    savedAt: new Date().toISOString(),
+  };
   await tx("readwrite", (s) => s.put(rec));
 }
+
 export async function getFile(key: string): Promise<StoredFile | undefined> {
-  try { return (await tx<StoredFile | undefined>("readonly", (s) => s.get(key))) ?? undefined; } catch { return undefined; }
+  try {
+    return (await tx<StoredFile | undefined>("readonly", (s) => s.get(key))) ?? undefined;
+  } catch (err) {
+    console.warn("[IDB] getFile error for key:", key, err);
+    return undefined;
+  }
 }
+
 export async function deleteFile(key: string): Promise<void> {
-  try { await tx("readwrite", (s) => s.delete(key)); } catch { /* ignore */ }
+  try {
+    await tx("readwrite", (s) => s.delete(key));
+  } catch {
+    /* ignore */
+  }
 }
+
 export async function clearFiles(): Promise<void> {
-  try { await tx("readwrite", (s) => s.clear()); } catch { /* ignore */ }
+  try {
+    await tx("readwrite", (s) => s.clear());
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Downscale an image to keep IndexedDB lean. PDFs/other files are returned untouched. */
