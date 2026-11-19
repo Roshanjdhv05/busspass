@@ -16,12 +16,25 @@ export function useCollection<T extends { id: string }>(c: Collection<T>): T[] {
   return items;
 }
 
-/** Resolves an IndexedDB file key to an object URL. */
+/** Resolves an IndexedDB file key OR a Supabase Storage https:// URL to a usable URL.
+ *  - If key starts with "https://" it is a Supabase Storage public URL → returned directly.
+ *  - Otherwise treats key as an IndexedDB key and loads from IDB.
+ */
 export function useFileUrl(key?: string): { url?: string; type?: string; name?: string; loading: boolean } {
   const [state, setState] = useState<{ url?: string; type?: string; name?: string; loading: boolean }>({ loading: !!key });
   useEffect(() => {
     let revoked = false; let obj: string | undefined;
     if (!key) { setState({ loading: false }); return; }
+
+    // Supabase Storage public URL — use directly, no IDB lookup needed
+    if (key.startsWith("https://") || key.startsWith("http://")) {
+      const ext = key.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
+      const type = ext === "pdf" ? "application/pdf" : ext === "png" ? "image/png" : "image/jpeg";
+      const name = decodeURIComponent(key.split("/").pop()?.split("?")[0] ?? "document");
+      setState({ url: key, type, name, loading: false });
+      return;
+    }
+
     setState((s) => ({ ...s, loading: true }));
     getFile(key).then((f) => {
       if (revoked) return;

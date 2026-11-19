@@ -7,7 +7,7 @@ import { ArrowLeft, ArrowRight, Camera, Check, CheckCircle2, Pencil } from "luci
 import { useStudent } from "@/hooks/useStudent";
 import { useToast } from "@/hooks/useToast";
 import { db } from "@/lib/storage";
-import { submitApplication } from "@/lib/services";
+import { submitApplication, uploadDocumentToSupabase } from "@/lib/services";
 import { Avatar, Button, Card, Field, Input, PageSkeleton, Select } from "@/components/ui";
 import { COURSES, YEARS, cn, isEmail, isMobile, passTypeLabel } from "@/lib/utils";
 import { PASS_TYPES, type Application, type PassType } from "@/lib/types";
@@ -142,9 +142,31 @@ function Apply() {
   const submit = () => {
     for (let i = 0; i < 2; i++) { const e = validate(i, form); if (Object.keys(e).length) { setErrors(e); setStep(i); toast("Some details need attention", "error"); return; } }
     setBusy(true);
-    setTimeout(() => {
+    (async () => {
       try {
         if (form.profilePhoto && profile.id) db.studentProfiles.update(profile.id, { photoKey: form.profilePhoto });
+
+        // Upload documents to Supabase Storage so admin can view them from any device
+        const userId = user.id;
+        const [photoUrl, idCardUrl, admissionUrl, aadharUrl, panUrl] = await Promise.all([
+          uploadDocumentToSupabase(profile.photoKey, `users/${userId}`),
+          uploadDocumentToSupabase(profile.idCardKey, `users/${userId}`),
+          uploadDocumentToSupabase(profile.admissionKey, `users/${userId}`),
+          uploadDocumentToSupabase(profile.aadharKey, `users/${userId}`),
+          uploadDocumentToSupabase(profile.panKey, `users/${userId}`),
+        ]);
+
+        // Update profile with Supabase URLs so future views also work
+        if (profile.id) {
+          db.studentProfiles.update(profile.id, {
+            photoKey: photoUrl ?? profile.photoKey,
+            idCardKey: idCardUrl ?? profile.idCardKey,
+            admissionKey: admissionUrl ?? profile.admissionKey,
+            aadharKey: aadharUrl ?? profile.aadharKey,
+            panKey: panUrl ?? profile.panKey,
+          });
+        }
+
         const { app } = submitApplication({
           userId: user.id, studentProfileId: profile.id, fullName: form.fullName.trim(),
           studentId: form.studentId.trim().toUpperCase(), college: form.college.trim(),
@@ -154,9 +176,9 @@ function Apply() {
           routeId: form.routeId, startPoint: form.startStop, destination: form.destination,
           stopId: form.stopId, passType: form.passType as PassType,
           documents: {
-            photo: profile.photoKey,
-            studentIdCard: profile.idCardKey,
-            admissionProof: profile.admissionKey,
+            photo: photoUrl ?? profile.photoKey,
+            studentIdCard: idCardUrl ?? profile.idCardKey,
+            admissionProof: admissionUrl ?? profile.admissionKey,
           },
           resubmittedFrom: resubmitId ?? undefined,
         });
@@ -167,7 +189,7 @@ function Apply() {
         toast(ex instanceof Error ? ex.message : "Could not submit", "error");
       }
       setBusy(false);
-    }, 600);
+    })();
   };
 
   // ---------- success screen

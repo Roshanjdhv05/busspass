@@ -126,6 +126,36 @@ export function profileForUser(userId: string): StudentProfile | undefined {
 // ------------------------------------------------------------------ applications
 export type ApplicationDraft = Omit<Application, "id" | "status" | "submittedAt" | "timeline" | "reviewedAt" | "rejectionReason" | "passId">;
 
+/**
+ * Uploads a file from IndexedDB to Supabase Storage and returns the public URL.
+ * Falls back gracefully if Supabase is not configured or upload fails.
+ */
+export async function uploadDocumentToSupabase(fileKey: string | undefined, folder: string): Promise<string | undefined> {
+  if (!fileKey || !isSupabaseConfigured() || !supabase) return fileKey;
+  // If already a URL (already uploaded), return as-is
+  if (fileKey.startsWith("http://") || fileKey.startsWith("https://")) return fileKey;
+  try {
+    const { getFile } = await import("./idb");
+    const stored = await getFile(fileKey);
+    if (!stored) return fileKey;
+    const ext = stored.name.includes(".") ? stored.name.split(".").pop() : stored.type.split("/")[1] ?? "jpg";
+    const path = `${folder}/${fileKey}.${ext}`;
+    const { error } = await supabase.storage.from("documents").upload(path, stored.blob, {
+      contentType: stored.type,
+      upsert: true,
+    });
+    if (error) {
+      console.warn("Supabase storage upload failed:", error.message);
+      return fileKey; // fall back to IDB key
+    }
+    const { data } = supabase.storage.from("documents").getPublicUrl(path);
+    return data.publicUrl ?? fileKey;
+  } catch (e) {
+    console.warn("Document upload error:", e);
+    return fileKey;
+  }
+}
+
 export function submitApplication(draft: ApplicationDraft): { app: Application } {
   const at = nowIso();
   const appId = newApplicationId();

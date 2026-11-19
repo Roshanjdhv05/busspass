@@ -10,6 +10,7 @@ import { db } from "@/lib/storage";
 import { compressImage, putFile } from "@/lib/idb";
 import { uid } from "@/lib/storage";
 // compressImage, putFile, uid used in photo upload handler below
+import { uploadDocumentToSupabase } from "@/lib/services";
 import { FileDrop } from "@/components/apply/FileDrop";
 import { Avatar, Button, Card, EmptyState, Field, Input, Modal, PageSkeleton, SectionTitle, Select, StatusBadge } from "@/components/ui";
 import { COURSES, YEARS, cn, fmtDate, isEmail, isMobile, passState } from "@/lib/utils";
@@ -53,7 +54,9 @@ function ProfileInner() {
     if (!file || !file.type.startsWith("image/")) return toast("Choose an image file", "error");
     const key = uid("file");
     await putFile(key, await compressImage(file, 500), file.name);
-    db.studentProfiles.update(profile.id, { photoKey: key });
+    // Try uploading to Supabase Storage for cross-device access
+    const url = await uploadDocumentToSupabase(key, `users/${user.id}`);
+    db.studentProfiles.update(profile.id, { photoKey: url ?? key });
     toast("Photo updated");
   };
 
@@ -186,6 +189,7 @@ function ProfileInner() {
               <DocDropField
                 label={label} hint={hint} accept={accept}
                 value={profile[field]}
+                userId={user.id}
                 onSaved={(key) => {
                   const updated = { ...profile, [field]: key };
                   const allDone = !!(updated.aadharKey && updated.panKey && updated.idCardKey && updated.photoKey);
@@ -228,9 +232,9 @@ function ProfileInner() {
 }
 
 // Thin wrapper: FileDrop already handles upload to IndexedDB internally and calls onChange(key).
-// We just need to intercept that key to also save to the profile.
-function DocDropField({ label, hint, accept, value, onSaved }: {
-  label: string; hint: string; accept: string; value?: string; onSaved: (key: string) => void;
+// We also upload to Supabase Storage so admin can view documents cross-device.
+function DocDropField({ label, hint, accept, value, onSaved, userId }: {
+  label: string; hint: string; accept: string; value?: string; onSaved: (key: string) => void; userId: string;
 }) {
   return (
     <FileDrop
@@ -238,7 +242,12 @@ function DocDropField({ label, hint, accept, value, onSaved }: {
       hint={hint}
       accept={accept}
       value={value}
-      onChange={(key) => { if (key) onSaved(key); }}
+      onChange={async (key) => {
+        if (!key) return;
+        // Upload to Supabase Storage in background; use the public URL as the key
+        const url = await uploadDocumentToSupabase(key, `users/${userId}`);
+        onSaved(url ?? key);
+      }}
       error={undefined}
     />
   );
