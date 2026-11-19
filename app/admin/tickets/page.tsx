@@ -1,5 +1,6 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { CheckCircle2, QrCode, Search, TicketCheck, X } from "lucide-react";
 import { useCollection } from "@/hooks/useData";
 import { db } from "@/lib/storage";
@@ -18,6 +19,11 @@ export default function AdminTicketsPage() {
   const [filter, setFilter] = useState("all");
   const [routeId, setRouteId] = useState("all");
   const [verifyTicket, setVerifyTicket] = useState<BusTicket | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const isExpired = (t: typeof tickets[0]) => new Date(t.expiresAt).getTime() < Date.now();
   const ticketStatus = (t: typeof tickets[0]) => t.used ? "revoked" : isExpired(t) ? "expired" : "active";
@@ -49,68 +55,83 @@ export default function AdminTicketsPage() {
   return (
     <>
       {/* Verify modal */}
-      <AnimatePresence>
-        {verifyTicket && (
-          <motion.div
-            key="overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
-            onClick={() => setVerifyTicket(null)}
-          >
-            <motion.div
-              initial={{ scale: 0.92, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.92, opacity: 0 }}
-              transition={{ type: "spring", stiffness: 260, damping: 22 }}
-              className="relative w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
+      {mounted && typeof document !== "undefined" && createPortal(
+        <AnimatePresence>
+          {verifyTicket && (
+            <div
+              className="fixed inset-0 z-[9999] flex items-center justify-center p-4 pt-16 sm:pt-20 overflow-y-auto"
+              role="dialog"
+              aria-modal="true"
             >
-              <button onClick={() => setVerifyTicket(null)} className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-forest-50 text-ink-soft hover:bg-forest-100">
-                <X size={18} />
-              </button>
+              {/* Backdrop */}
+              <motion.div
+                key="ticket-backdrop"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 bg-forest-950/60 backdrop-blur-md transition-opacity"
+                onClick={() => setVerifyTicket(null)}
+              />
 
-              {/* Status header */}
-              <div className={cn("mb-4 rounded-2xl px-4 py-3 text-center font-bold",
-                verifyTicket.used ? "bg-red-50 text-red-700" :
-                isExpired(verifyTicket) ? "bg-orange-50 text-orange-700" :
-                "bg-emerald-50 text-emerald-700"
-              )}>
-                {verifyTicket.used ? "⛔ Already Used" : isExpired(verifyTicket) ? "⏰ Expired" : "✅ Valid Ticket"}
-              </div>
-
-              <div className="mb-4 text-center">
-                <div className="text-xs font-semibold uppercase tracking-wide text-ink-mute">Ticket ID</div>
-                <div className="mt-0.5 text-lg font-extrabold">{verifyTicket.id}</div>
-              </div>
-
-              {/* QR */}
-              <div className="flex justify-center">
-                <TicketQR ticket={verifyTicket} size={200} />
-              </div>
-
-              <div className="mt-4 space-y-1.5 rounded-2xl bg-forest-50 p-4 text-sm">
-                <div className="flex justify-between"><span className="text-ink-mute">Student</span><span className="font-semibold">{verifyTicket.studentName}</span></div>
-                <div className="flex justify-between"><span className="text-ink-mute">Route</span><span className="font-semibold">{verifyTicket.fromStopName} → {verifyTicket.toStopName}</span></div>
-                <div className="flex justify-between"><span className="text-ink-mute">Type</span><span className="capitalize font-semibold">{verifyTicket.ticketType} · {verifyTicket.passengers} pax</span></div>
-                <div className="flex justify-between"><span className="text-ink-mute">Fare</span><span className="font-bold text-forest-700">₹{verifyTicket.fare}</span></div>
-                <div className="flex justify-between"><span className="text-ink-mute">Expires</span><span className="font-semibold">{fmtDateTime(verifyTicket.expiresAt)}</span></div>
-              </div>
-
-              {/* Mark as used */}
-              {!verifyTicket.used && !isExpired(verifyTicket) && (
+              <motion.div
+                key="ticket-modal-card"
+                initial={{ scale: 0.94, opacity: 0, y: 16 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.94, opacity: 0, y: 16 }}
+                transition={{ type: "spring", stiffness: 300, damping: 26 }}
+                className="relative z-10 w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl border border-forest-100 my-auto mt-12 sm:mt-16"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <button
-                  onClick={() => handleMarkUsed(verifyTicket)}
-                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-forest-700 py-3 text-sm font-bold text-white shadow-soft hover:bg-forest-800"
+                  onClick={() => setVerifyTicket(null)}
+                  aria-label="Close"
+                  className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-forest-50 text-ink-soft hover:bg-forest-100 transition-colors"
                 >
-                  <CheckCircle2 size={18} /> Mark as Used
+                  <X size={18} />
                 </button>
-              )}
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+
+                {/* Status header */}
+                <div className={cn("mb-4 rounded-2xl px-4 py-2.5 text-center font-bold text-sm",
+                  verifyTicket.used ? "bg-red-50 text-red-700 border border-red-100" :
+                  isExpired(verifyTicket) ? "bg-orange-50 text-orange-700 border border-orange-100" :
+                  "bg-emerald-50 text-emerald-700 border border-emerald-100"
+                )}>
+                  {verifyTicket.used ? "⛔ Already Used" : isExpired(verifyTicket) ? "⏰ Expired" : "✅ Valid Ticket"}
+                </div>
+
+                <div className="mb-4 text-center">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-ink-mute">Ticket ID</div>
+                  <div className="mt-0.5 text-lg font-extrabold text-ink">{verifyTicket.id}</div>
+                </div>
+
+                {/* QR */}
+                <div className="flex justify-center">
+                  <TicketQR ticket={verifyTicket} size={200} />
+                </div>
+
+                <div className="mt-4 space-y-1.5 rounded-2xl bg-forest-50/80 border border-forest-100/70 p-4 text-sm">
+                  <div className="flex justify-between"><span className="text-ink-mute">Student</span><span className="font-semibold text-ink">{verifyTicket.studentName}</span></div>
+                  <div className="flex justify-between"><span className="text-ink-mute">Route</span><span className="font-semibold text-ink">{verifyTicket.fromStopName} → {verifyTicket.toStopName}</span></div>
+                  <div className="flex justify-between"><span className="text-ink-mute">Type</span><span className="capitalize font-semibold text-ink">{verifyTicket.ticketType} · {verifyTicket.passengers} pax</span></div>
+                  <div className="flex justify-between"><span className="text-ink-mute">Fare</span><span className="font-bold text-forest-700">₹{verifyTicket.fare}</span></div>
+                  <div className="flex justify-between"><span className="text-ink-mute">Expires</span><span className="font-semibold text-ink">{fmtDateTime(verifyTicket.expiresAt)}</span></div>
+                </div>
+
+                {/* Mark as used */}
+                {!verifyTicket.used && !isExpired(verifyTicket) && (
+                  <button
+                    onClick={() => handleMarkUsed(verifyTicket)}
+                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-forest-700 py-3 text-sm font-bold text-white shadow-soft hover:bg-forest-800 transition-colors"
+                  >
+                    <CheckCircle2 size={18} /> Mark as Used
+                  </button>
+                )}
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
 
       <div className="space-y-4">
         <div>
