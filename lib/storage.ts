@@ -53,7 +53,7 @@ const TABLE_MAP: Record<string, string> = {
 };
 
 // Convert camelCase keys → snake_case for Supabase, and back
-function toSnake(obj: Record<string, unknown>, table?: string): Record<string, unknown> {
+export function toSnake(obj: Record<string, unknown>, table?: string): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
     // Custom mapping for settings fields
@@ -113,7 +113,7 @@ function toSnake(obj: Record<string, unknown>, table?: string): Record<string, u
   }
   return out;
 }
-function toCamel(obj: Record<string, unknown>, table?: string): Record<string, unknown> {
+export function toCamel(obj: Record<string, unknown>, table?: string): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
     if (table === "settings") {

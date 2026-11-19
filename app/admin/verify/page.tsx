@@ -19,7 +19,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { useCollection } from "@/hooks/useData";
-import { db } from "@/lib/storage";
+import { db, toCamel } from "@/lib/storage";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import { Avatar, Button, Card, Input } from "@/components/ui";
 import { daysLeft, fmtDate, fmtDateTime, passState, passTypeLabel, cn } from "@/lib/utils";
 import type { BusRoute, BusTicket, IssuedPass, StudentProfile } from "@/lib/types";
@@ -53,14 +54,42 @@ type Result =
       query: string;
     };
 
+/** Parse ticket payload if QR code contains full JSON ticket object */
+function parseTicketPayload(raw: string): Partial<BusTicket> | null {
+  try {
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      const j = JSON.parse(raw.slice(start, end + 1));
+      if (j.id && typeof j.id === "string") {
+        return {
+          id: j.id.trim().toUpperCase(),
+          fromStopName: j.from ?? "",
+          toStopName: j.to ?? "",
+          ticketType: j.type ?? "single",
+          passengers: j.pax ?? 1,
+          fare: j.fare ?? 0,
+          expiresAt: j.exp ?? new Date().toISOString(),
+          used: Boolean(j.used),
+        };
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 /** Parse any QR code text, JSON string, or URL query into a clean ID */
 function parseAnyInput(raw: string): string {
   const t = raw.trim();
 
   // 1. JSON payload from pass or ticket QR
-  if (t.startsWith("{")) {
+  if (t.includes("{") && t.includes("}")) {
     try {
-      const j = JSON.parse(t);
+      const start = t.indexOf("{");
+      const end = t.lastIndexOf("}");
+      const j = JSON.parse(t.slice(start, end + 1));
       if (typeof j.pass === "string") return j.pass.trim().toUpperCase();
       if (typeof j.id === "string") return j.id.trim().toUpperCase();
     } catch {
@@ -100,34 +129,133 @@ export default function Verify() {
   const [validating, setValidating] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
 
-  const verify = (raw: string) => {
+  // Sync latest tickets and passes on mount so cache is fresh
+  useEffect(() => {
+    if (isSupabaseConfigured()) {
+      db.tickets.syncFromSupabase();
+      db.issuedPasses.syncFromSupabase();
+    }
+  }, []);
+
+  const verify = async (raw: string) => {
     const id = parseAnyInput(raw);
     if (!id) return;
+    setValidating(true);
 
-    // Check if query is explicitly or matched as a Ticket
-    const isExplicitTicket = id.startsWith("TKT");
-    const isExplicitPass = id.startsWith("BP");
+    try {
+      // Check if query is explicitly or matched as a Ticket
+      const isExplicitTicket = id.startsWith("TKT");
+      const isExplicitPass = id.startsWith("BP");
+      const embeddedTicket = parseTicketPayload(raw);
 
-    // 1. If explicit ticket or in ticket mode
-    if (isExplicitTicket || mode === "ticket") {
-      const ticket = db.tickets.get(id) ?? db.tickets.all().find((t) => t.id.toUpperCase() === id);
-      if (ticket) {
-        if (ticket.used) {
-          return setRes({ type: "ticket", kind: "used", ticket, query: id });
+      // 1. If explicit ticket or in ticket mode
+      if (isExplicitTicket || mode === "ticket") {
+        let ticket = db.tickets.get(id) ?? db.tickets.all().find((t) => t.id.toUpperCase() === id);
+
+        // Live Supabase lookup if not found locally
+        if (!ticket && isSupabaseConfigured() && supabase) {
+          const { data: sbRow } = await supabase
+            .from("bus_tickets")
+            .select("*")
+            .ilike("id", id)
+            .maybeSingle();
+          if (sbRow) {
+            ticket = toCamel(sbRow, "bus_tickets") as unknown as BusTicket;
+            if (!db.tickets.get(ticket.id)) db.tickets.add(ticket);
+            else db.tickets.update(ticket.id, ticket);
+          }
         }
-        if (new Date(ticket.expiresAt).getTime() < Date.now()) {
-          return setRes({ type: "ticket", kind: "expired", ticket, query: id });
-        }
-        return setRes({ type: "ticket", kind: "valid", ticket, query: id });
-      }
-      if (isExplicitTicket) {
-        return setRes({ type: "unknown", kind: "notfound", query: id });
-      }
-    }
 
-    // 2. If explicit pass or in pass mode
-    if (isExplicitPass || mode === "pass") {
-      const pass = db.issuedPasses.get(id) ?? db.issuedPasses.all().find((p) => p.id.toUpperCase() === id);
+        // If not in DB yet, but embedded in the QR payload
+        if (!ticket && embeddedTicket && embeddedTicket.id === id) {
+          ticket = {
+            id: embeddedTicket.id,
+            userId: "verified_passenger",
+            studentProfileId: "",
+            studentName: "Verified Rider",
+            routeId: "",
+            fromStopId: "",
+            toStopId: "",
+            fromStopName: embeddedTicket.fromStopName || "Origin",
+            toStopName: embeddedTicket.toStopName || "Destination",
+            ticketType: (embeddedTicket.ticketType as "single" | "return") || "single",
+            passengers: embeddedTicket.passengers || 1,
+            fare: embeddedTicket.fare || 0,
+            stations: 1,
+            issuedAt: new Date().toISOString(),
+            expiresAt: embeddedTicket.expiresAt || new Date().toISOString(),
+            used: embeddedTicket.used || false,
+          };
+          db.tickets.add(ticket);
+        }
+
+        if (ticket) {
+          if (ticket.used) {
+            return setRes({ type: "ticket", kind: "used", ticket, query: id });
+          }
+          if (new Date(ticket.expiresAt).getTime() < Date.now()) {
+            return setRes({ type: "ticket", kind: "expired", ticket, query: id });
+          }
+          return setRes({ type: "ticket", kind: "valid", ticket, query: id });
+        }
+        if (isExplicitTicket) {
+          return setRes({ type: "unknown", kind: "notfound", query: id });
+        }
+      }
+
+      // 2. If explicit pass or in pass mode
+      if (isExplicitPass || mode === "pass") {
+        let pass = db.issuedPasses.get(id) ?? db.issuedPasses.all().find((p) => p.id.toUpperCase() === id);
+        let profile = profiles.find((p) => p.id === pass?.studentProfileId);
+        let route = routes.find((r) => r.id === pass?.routeId);
+
+        // Live Supabase lookup if not found locally
+        if (!pass && isSupabaseConfigured() && supabase) {
+          const { data: sbPass } = await supabase
+            .from("issued_passes")
+            .select("*")
+            .ilike("id", id)
+            .maybeSingle();
+          if (sbPass) {
+            pass = toCamel(sbPass, "issued_passes") as unknown as IssuedPass;
+            if (!db.issuedPasses.get(pass.id)) db.issuedPasses.add(pass);
+
+            if (pass.studentProfileId) {
+              const { data: sbProf } = await supabase.from("student_profiles").select("*").eq("id", pass.studentProfileId).maybeSingle();
+              if (sbProf) profile = toCamel(sbProf, "student_profiles") as unknown as StudentProfile;
+            }
+            if (pass.routeId) {
+              const { data: sbRoute } = await supabase.from("bus_routes").select("*").eq("id", pass.routeId).maybeSingle();
+              if (sbRoute) route = toCamel(sbRoute, "bus_routes") as unknown as BusRoute;
+            }
+          }
+        }
+
+        if (pass) {
+          const s = passState(pass);
+          return setRes({
+            type: "pass",
+            kind: s === "active" ? "valid" : s,
+            pass,
+            profile,
+            route,
+            query: id,
+          });
+        }
+        if (isExplicitPass) {
+          return setRes({ type: "unknown", kind: "notfound", query: id });
+        }
+      }
+
+      // 3. Fallback: Search both collections with live Supabase query
+      let pass = db.issuedPasses.get(id) ?? db.issuedPasses.all().find((p) => p.id.toUpperCase() === id);
+      if (!pass && isSupabaseConfigured() && supabase) {
+        const { data: sbPass } = await supabase.from("issued_passes").select("*").ilike("id", id).maybeSingle();
+        if (sbPass) {
+          pass = toCamel(sbPass, "issued_passes") as unknown as IssuedPass;
+          if (!db.issuedPasses.get(pass.id)) db.issuedPasses.add(pass);
+        }
+      }
       if (pass) {
         const s = passState(pass);
         const profile = profiles.find((p) => p.id === pass.studentProfileId);
@@ -141,52 +269,65 @@ export default function Verify() {
           query: id,
         });
       }
-      if (isExplicitPass) {
-        return setRes({ type: "unknown", kind: "notfound", query: id });
-      }
-    }
 
-    // 3. Fallback: Search both collections
-    const pass = db.issuedPasses.get(id) ?? db.issuedPasses.all().find((p) => p.id.toUpperCase() === id);
-    if (pass) {
-      const s = passState(pass);
-      const profile = profiles.find((p) => p.id === pass.studentProfileId);
-      const route = routes.find((r) => r.id === pass.routeId);
-      return setRes({
-        type: "pass",
-        kind: s === "active" ? "valid" : s,
-        pass,
-        profile,
-        route,
-        query: id,
-      });
-    }
-
-    const ticket = db.tickets.get(id) ?? db.tickets.all().find((t) => t.id.toUpperCase() === id);
-    if (ticket) {
-      if (ticket.used) {
-        return setRes({ type: "ticket", kind: "used", ticket, query: id });
+      let ticket = db.tickets.get(id) ?? db.tickets.all().find((t) => t.id.toUpperCase() === id);
+      if (!ticket && isSupabaseConfigured() && supabase) {
+        const { data: sbRow } = await supabase.from("bus_tickets").select("*").ilike("id", id).maybeSingle();
+        if (sbRow) {
+          ticket = toCamel(sbRow, "bus_tickets") as unknown as BusTicket;
+          if (!db.tickets.get(ticket.id)) db.tickets.add(ticket);
+        }
       }
-      if (new Date(ticket.expiresAt).getTime() < Date.now()) {
-        return setRes({ type: "ticket", kind: "expired", ticket, query: id });
+      if (!ticket && embeddedTicket && embeddedTicket.id === id) {
+        ticket = {
+          id: embeddedTicket.id,
+          userId: "verified_passenger",
+          studentProfileId: "",
+          studentName: "Verified Rider",
+          routeId: "",
+          fromStopId: "",
+          toStopId: "",
+          fromStopName: embeddedTicket.fromStopName || "Origin",
+          toStopName: embeddedTicket.toStopName || "Destination",
+          ticketType: (embeddedTicket.ticketType as "single" | "return") || "single",
+          passengers: embeddedTicket.passengers || 1,
+          fare: embeddedTicket.fare || 0,
+          stations: 1,
+          issuedAt: new Date().toISOString(),
+          expiresAt: embeddedTicket.expiresAt || new Date().toISOString(),
+          used: embeddedTicket.used || false,
+        };
+        db.tickets.add(ticket);
       }
-      return setRes({ type: "ticket", kind: "valid", ticket, query: id });
-    }
 
-    setRes({ type: "unknown", kind: "notfound", query: id });
+      if (ticket) {
+        if (ticket.used) {
+          return setRes({ type: "ticket", kind: "used", ticket, query: id });
+        }
+        if (new Date(ticket.expiresAt).getTime() < Date.now()) {
+          return setRes({ type: "ticket", kind: "expired", ticket, query: id });
+        }
+        return setRes({ type: "ticket", kind: "valid", ticket, query: id });
+      }
+
+      setRes({ type: "unknown", kind: "notfound", query: id });
+    } finally {
+      setValidating(false);
+    }
   };
 
   // Mark valid ticket as used
-  const handleMarkTicketUsed = (tId: string) => {
+  const handleMarkTicketUsed = async (tId: string) => {
     setValidating(true);
-    setTimeout(() => {
-      db.tickets.update(tId, { used: true });
-      const updated = db.tickets.get(tId);
-      if (updated) {
-        setRes({ type: "ticket", kind: "used", ticket: updated, query: tId });
-      }
-      setValidating(false);
-    }, 200);
+    db.tickets.update(tId, { used: true });
+    if (isSupabaseConfigured() && supabase) {
+      await supabase.from("bus_tickets").update({ used: true }).ilike("id", tId);
+    }
+    const updated = db.tickets.get(tId);
+    if (updated) {
+      setRes({ type: "ticket", kind: "used", ticket: { ...updated, used: true }, query: tId });
+    }
+    setValidating(false);
   };
 
   // Camera QR scanner

@@ -2,7 +2,8 @@
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AlertTriangle, CheckCircle2, Clock, MapPin, ShieldCheck, Ticket, User, XCircle } from "lucide-react";
-import { db } from "@/lib/storage";
+import { db, toCamel } from "@/lib/storage";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import { daysLeft, fmtDate, fmtDateTime, passState, passTypeLabel } from "@/lib/utils";
 import type { BusRoute, BusTicket, IssuedPass, StudentProfile } from "@/lib/types";
 
@@ -33,78 +34,106 @@ function VerifyInner() {
   const [result, setResult] = useState<PublicResult>({ type: "loading" });
 
   useEffect(() => {
-    const q = rawQuery.trim().toUpperCase();
-    if (!q) {
-      setResult({ type: "not_found", query: "" });
-      return;
-    }
-
-    // 1. Check ticket
-    if (q.startsWith("TKT") || sp.get("t") || sp.get("ticket")) {
-      const ticket = db.tickets.get(q) ?? db.tickets.all().find((t) => t.id.toUpperCase() === q);
-      if (ticket) {
-        if (ticket.used) {
-          setResult({ type: "ticket", state: "used", ticket });
-          return;
-        }
-        if (new Date(ticket.expiresAt).getTime() < Date.now()) {
-          setResult({ type: "ticket", state: "expired", ticket });
-          return;
-        }
-        setResult({ type: "ticket", state: "valid", ticket });
+    let active = true;
+    const runLookup = async () => {
+      const q = rawQuery.trim().toUpperCase();
+      if (!q) {
+        if (active) setResult({ type: "not_found", query: "" });
         return;
       }
-    }
 
-    // 2. Check pass
-    if (q.startsWith("BP") || sp.get("p") || sp.get("pass")) {
-      const pass = db.issuedPasses.get(q) ?? db.issuedPasses.all().find((p) => p.id.toUpperCase() === q);
-      if (pass) {
+      // 1. Check ticket
+      if (q.startsWith("TKT") || sp.get("t") || sp.get("ticket")) {
+        let ticket = db.tickets.get(q) ?? db.tickets.all().find((t) => t.id.toUpperCase() === q);
+        if (!ticket && isSupabaseConfigured() && supabase) {
+          const { data: sbTicket } = await supabase.from("bus_tickets").select("*").ilike("id", q).maybeSingle();
+          if (sbTicket && active) {
+            ticket = toCamel(sbTicket, "bus_tickets") as unknown as BusTicket;
+            if (!db.tickets.get(ticket.id)) db.tickets.add(ticket);
+          }
+        }
+        if (ticket && active) {
+          if (ticket.used) return setResult({ type: "ticket", state: "used", ticket });
+          if (new Date(ticket.expiresAt).getTime() < Date.now()) return setResult({ type: "ticket", state: "expired", ticket });
+          return setResult({ type: "ticket", state: "valid", ticket });
+        }
+      }
+
+      // 2. Check pass
+      if (q.startsWith("BP") || sp.get("p") || sp.get("pass")) {
+        let pass = db.issuedPasses.get(q) ?? db.issuedPasses.all().find((p) => p.id.toUpperCase() === q);
+        let profile = db.studentProfiles.all().find((p) => p.id === pass?.studentProfileId);
+        let route = db.busRoutes.get(pass?.routeId);
+
+        if (!pass && isSupabaseConfigured() && supabase) {
+          const { data: sbPass } = await supabase.from("issued_passes").select("*").ilike("id", q).maybeSingle();
+          if (sbPass && active) {
+            pass = toCamel(sbPass, "issued_passes") as unknown as IssuedPass;
+            if (!db.issuedPasses.get(pass.id)) db.issuedPasses.add(pass);
+            if (pass.studentProfileId) {
+              const { data: sbProf } = await supabase.from("student_profiles").select("*").eq("id", pass.studentProfileId).maybeSingle();
+              if (sbProf) profile = toCamel(sbProf, "student_profiles") as unknown as StudentProfile;
+            }
+            if (pass.routeId) {
+              const { data: sbRoute } = await supabase.from("bus_routes").select("*").eq("id", pass.routeId).maybeSingle();
+              if (sbRoute) route = toCamel(sbRoute, "bus_routes") as unknown as BusRoute;
+            }
+          }
+        }
+
+        if (pass && active) {
+          const s = passState(pass);
+          return setResult({
+            type: "pass",
+            state: s === "active" ? "valid" : s,
+            pass,
+            profile,
+            route,
+          });
+        }
+      }
+
+      // 3. Fallback search both
+      let pass = db.issuedPasses.get(q) ?? db.issuedPasses.all().find((p) => p.id.toUpperCase() === q);
+      if (!pass && isSupabaseConfigured() && supabase) {
+        const { data: sbPass } = await supabase.from("issued_passes").select("*").ilike("id", q).maybeSingle();
+        if (sbPass && active) {
+          pass = toCamel(sbPass, "issued_passes") as unknown as IssuedPass;
+          if (!db.issuedPasses.get(pass.id)) db.issuedPasses.add(pass);
+        }
+      }
+      if (pass && active) {
         const s = passState(pass);
         const profile = db.studentProfiles.all().find((p) => p.id === pass.studentProfileId);
         const route = db.busRoutes.get(pass.routeId);
-        setResult({
+        return setResult({
           type: "pass",
           state: s === "active" ? "valid" : s,
           pass,
           profile,
           route,
         });
-        return;
       }
-    }
 
-    // 3. Fallback search both
-    const pass = db.issuedPasses.get(q) ?? db.issuedPasses.all().find((p) => p.id.toUpperCase() === q);
-    if (pass) {
-      const s = passState(pass);
-      const profile = db.studentProfiles.all().find((p) => p.id === pass.studentProfileId);
-      const route = db.busRoutes.get(pass.routeId);
-      setResult({
-        type: "pass",
-        state: s === "active" ? "valid" : s,
-        pass,
-        profile,
-        route,
-      });
-      return;
-    }
-
-    const ticket = db.tickets.get(q) ?? db.tickets.all().find((t) => t.id.toUpperCase() === q);
-    if (ticket) {
-      if (ticket.used) {
-        setResult({ type: "ticket", state: "used", ticket });
-        return;
+      let ticket = db.tickets.get(q) ?? db.tickets.all().find((t) => t.id.toUpperCase() === q);
+      if (!ticket && isSupabaseConfigured() && supabase) {
+        const { data: sbTicket } = await supabase.from("bus_tickets").select("*").ilike("id", q).maybeSingle();
+        if (sbTicket && active) {
+          ticket = toCamel(sbTicket, "bus_tickets") as unknown as BusTicket;
+          if (!db.tickets.get(ticket.id)) db.tickets.add(ticket);
+        }
       }
-      if (new Date(ticket.expiresAt).getTime() < Date.now()) {
-        setResult({ type: "ticket", state: "expired", ticket });
-        return;
+      if (ticket && active) {
+        if (ticket.used) return setResult({ type: "ticket", state: "used", ticket });
+        if (new Date(ticket.expiresAt).getTime() < Date.now()) return setResult({ type: "ticket", state: "expired", ticket });
+        return setResult({ type: "ticket", state: "valid", ticket });
       }
-      setResult({ type: "ticket", state: "valid", ticket });
-      return;
-    }
 
-    setResult({ type: "not_found", query: q });
+      if (active) setResult({ type: "not_found", query: q });
+    };
+
+    runLookup();
+    return () => { active = false; };
   }, [rawQuery, sp]);
 
   const isValid = result.type !== "not_found" && result.type !== "loading" && result.state === "valid";
