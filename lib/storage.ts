@@ -49,7 +49,7 @@ const TABLE_MAP: Record<string, string> = {
   announcements: "announcements",
   notifications: "notifications",
   settings: "settings",
-  tickets: "tickets",
+  tickets: "bus_tickets",
 };
 
 // Convert camelCase keys → snake_case for Supabase, and back
@@ -81,6 +81,18 @@ function toSnake(obj: Record<string, unknown>, table?: string): Record<string, u
         continue;
       }
     }
+    // Custom mapping for bus_routes fields
+    if (table === "bus_routes") {
+      if (k === "start") { out["start_point"] = v; continue; }
+      if (k === "end") { out["end_point"] = v; continue; }
+    }
+    // Custom mapping for issued_passes fields
+    if (table === "issued_passes") {
+      if (k === "history") continue;
+      if (k === "notified7") { out["notified_7"] = v ?? false; continue; }
+      if (k === "notified30") { out["notified_30"] = v ?? false; continue; }
+      if (k === "notifiedExpired") { out["notified_expired"] = v ?? false; continue; }
+    }
     // Custom mapping for application fields
     if (table === "applications") {
       if (k === "studentId") { out["student_id_no"] = v; continue; }
@@ -92,7 +104,7 @@ function toSnake(obj: Record<string, unknown>, table?: string): Record<string, u
         continue;
       }
       if (k === "timeline") {
-        // Handled separately or skipped on applications table
+        // Handled separately on application_timeline table
         continue;
       }
     }
@@ -137,6 +149,15 @@ function toCamel(obj: Record<string, unknown>, table?: string): Record<string, u
         continue;
       }
     }
+    if (table === "bus_routes") {
+      if (k === "start_point") { out["start"] = v; continue; }
+      if (k === "end_point") { out["end"] = v; continue; }
+    }
+    if (table === "issued_passes") {
+      if (k === "notified_7") { out["notified7"] = v; continue; }
+      if (k === "notified_30") { out["notified30"] = v; continue; }
+      if (k === "notified_expired") { out["notifiedExpired"] = v; continue; }
+    }
     if (table === "applications") {
       if (k === "student_id_no") { out["studentId"] = v; continue; }
       if (k === "doc_photo" || k === "doc_student_id_card" || k === "doc_admission_proof") {
@@ -162,6 +183,9 @@ function toCamel(obj: Record<string, unknown>, table?: string): Record<string, u
       out["counters"] = { app: 0, pass: 0 };
     }
   }
+  if (table === "issued_passes" && !out["history"]) {
+    out["history"] = [{ at: (out["issueDate"] as string) || new Date().toISOString(), action: "issued", note: "Pass issued" }];
+  }
   if (table === "applications" && !out["timeline"]) {
     out["timeline"] = [{ key: "submitted", label: "Application submitted", at: (out["submittedAt"] as string) || new Date().toISOString() }];
   }
@@ -173,7 +197,7 @@ function toCamel(obj: Record<string, unknown>, table?: string): Record<string, u
 export class Collection<T extends { id: string }> {
   constructor(public readonly key: string) {}
 
-  private get tableName(): string {
+  public get tableName(): string {
     return TABLE_MAP[this.key] ?? this.key;
   }
 
@@ -197,20 +221,48 @@ export class Collection<T extends { id: string }> {
     if (!silent) emit();
   }
 
-  // ── Supabase read/write (fire-and-forget sync) ──
+  // ── Supabase read/write ──
 
-  private async sbUpsert(item: T) {
+  public async sbUpsert(item: T): Promise<void> {
     if (!supabase) return;
     try {
       const payload = toSnake(item as unknown as Record<string, unknown>, this.tableName);
       const { error } = await supabase.from(this.tableName).upsert(payload);
-      if (error) console.error(`[Supabase] upsert error on ${this.tableName}:`, error.message, error.details);
+      if (error) {
+        console.error(`[Supabase] upsert error on ${this.tableName}:`, error.message, error.details);
+      } else {
+        // Timeline & History secondary table sync
+        if (this.tableName === "applications") {
+          const app = item as unknown as Application;
+          if (Array.isArray(app.timeline) && app.timeline.length > 0) {
+            const events = app.timeline.map((t) => ({
+              application_id: app.id,
+              event_key: t.key,
+              label: t.label,
+              occurred_at: t.at || new Date().toISOString(),
+            }));
+            try { await supabase.from("application_timeline").upsert(events); } catch { /* ignore */ }
+          }
+        }
+        if (this.tableName === "issued_passes") {
+          const pass = item as unknown as IssuedPass;
+          if (Array.isArray(pass.history) && pass.history.length > 0) {
+            const historyEvents = pass.history.map((h) => ({
+              pass_id: pass.id,
+              action: h.action,
+              note: h.note || "",
+              occurred_at: h.at || new Date().toISOString(),
+            }));
+            try { await supabase.from("pass_history").insert(historyEvents); } catch { /* ignore */ }
+          }
+        }
+      }
     } catch (e) {
       console.error(`[Supabase] unexpected error in sbUpsert on ${this.tableName}:`, e);
     }
   }
 
-  private async sbDelete(id: string) {
+  public async sbDelete(id: string): Promise<void> {
     if (!supabase) return;
     try {
       const { error } = await supabase.from(this.tableName).delete().eq("id", id);
@@ -239,9 +291,9 @@ export class Collection<T extends { id: string }> {
     this.lsSet(items, silent);
     // sync to Supabase in background
     if (supabase) {
-      Promise.all(items.map((item) =>
-        supabase!.from(this.tableName).upsert(toSnake(item as unknown as Record<string, unknown>, this.tableName))
-      )).catch(() => { /* ignore */ });
+      Promise.all(items.map((item) => this.sbUpsert(item))).catch((err) => {
+        console.error(`[Supabase] replaceAll sync error on ${this.tableName}:`, err);
+      });
     }
   }
 
@@ -250,7 +302,16 @@ export class Collection<T extends { id: string }> {
     if (items.some((x) => x.id === item.id)) throw new Error(`Duplicate id ${item.id}`);
     items.push(item);
     this.lsSet(items);
-    this.sbUpsert(item);
+    void this.sbUpsert(item);
+    return item;
+  }
+
+  async addAsync(item: T): Promise<T> {
+    const items = this.lsAll();
+    if (items.some((x) => x.id === item.id)) throw new Error(`Duplicate id ${item.id}`);
+    items.push(item);
+    this.lsSet(items);
+    await this.sbUpsert(item);
     return item;
   }
 
@@ -260,14 +321,24 @@ export class Collection<T extends { id: string }> {
     if (i < 0) return undefined;
     items[i] = { ...items[i], ...patch, id };
     this.lsSet(items);
-    this.sbUpsert(items[i]);
+    void this.sbUpsert(items[i]);
+    return items[i];
+  }
+
+  async updateAsync(id: string, patch: Partial<T>): Promise<T | undefined> {
+    const items = this.lsAll();
+    const i = items.findIndex((x) => x.id === id);
+    if (i < 0) return undefined;
+    items[i] = { ...items[i], ...patch, id };
+    this.lsSet(items);
+    await this.sbUpsert(items[i]);
     return items[i];
   }
 
   remove(id: string) {
     const items = this.lsAll().filter((x) => x.id !== id);
     this.lsSet(items);
-    this.sbDelete(id);
+    void this.sbDelete(id);
   }
 
   removeWhere(pred: (x: T) => boolean) {
@@ -276,7 +347,7 @@ export class Collection<T extends { id: string }> {
     this.lsSet(after);
     const removed = before.filter(pred);
     if (supabase) {
-      removed.forEach((x) => this.sbDelete(x.id));
+      removed.forEach((x) => void this.sbDelete(x.id));
     }
   }
 
@@ -288,23 +359,33 @@ export class Collection<T extends { id: string }> {
     }
   }
 
-  // Pull latest data from Supabase into localStorage (call on app init when configured)
+  // Pull latest data from Supabase into localStorage and upload any local records missing in DB
   async syncFromSupabase(): Promise<void> {
     if (!supabase) return;
     try {
       const { data, error } = await supabase.from(this.tableName).select("*");
-      if (error || !data) return;
-      const items = data.map((row) => toCamel(row as Record<string, unknown>, this.tableName) as unknown as T);
-      if (items.length > 0) {
-        // Merge with existing items so newly created local records (like user/profile/application)
-        // are not wiped out before they are synced to Supabase
-        const existing = this.lsAll();
-        const mergedMap = new Map<string, T>();
-        for (const item of existing) mergedMap.set(item.id, item);
-        for (const item of items) mergedMap.set(item.id, item);
-        this.lsSet(Array.from(mergedMap.values()), true);
+      if (error || !data) {
+        if (error) console.error(`[Supabase] sync error on ${this.tableName}:`, error.message);
+        return;
       }
-    } catch { /* ignore */ }
+      const remoteItems = data.map((row) => toCamel(row as Record<string, unknown>, this.tableName) as unknown as T);
+      const localItems = this.lsAll();
+
+      // Find local items that do not exist on Supabase yet, and upload them
+      const remoteIds = new Set(remoteItems.map((r) => r.id));
+      const missingOnRemote = localItems.filter((loc) => !remoteIds.has(loc.id));
+      if (missingOnRemote.length > 0) {
+        await Promise.all(missingOnRemote.map((item) => this.sbUpsert(item)));
+      }
+
+      // Merge remote items into local
+      const mergedMap = new Map<string, T>();
+      for (const item of localItems) mergedMap.set(item.id, item);
+      for (const item of remoteItems) mergedMap.set(item.id, item);
+      this.lsSet(Array.from(mergedMap.values()), true);
+    } catch (e) {
+      console.error(`[Supabase] syncFromSupabase error on ${this.tableName}:`, e);
+    }
   }
 }
 
@@ -358,6 +439,23 @@ export const emitChange = emit;
 
 export async function syncAllFromSupabase(): Promise<void> {
   if (!isSupabaseConfigured()) return;
-  await Promise.all(Object.values(db).map((c) => c.syncFromSupabase()));
+  // Sync in foreign-key dependency order so relational constraints are preserved
+  const order: (keyof typeof db)[] = [
+    "settings",
+    "users",
+    "studentProfiles",
+    "busRoutes",
+    "busStops",
+    "applications",
+    "issuedPasses",
+    "tickets",
+    "announcements",
+    "notifications",
+  ];
+  for (const k of order) {
+    if (db[k]) {
+      await db[k].syncFromSupabase();
+    }
+  }
   emit();
 }

@@ -133,14 +133,14 @@ export function submitApplication(draft: ApplicationDraft): { app: Application }
     ...draft, id: appId, status: "pending", submittedAt: at,
     timeline: [{ key: "submitted", label: "Application submitted", at }],
   };
-  db.applications.add(app);
-  // keep the profile in sync with the latest details
+  // keep the profile in sync with the latest details BEFORE adding application so foreign keys match
   if (draft.studentProfileId) {
     db.studentProfiles.update(draft.studentProfileId, {
       fullName: draft.fullName, studentId: draft.studentId, college: draft.college, course: draft.course, year: draft.year,
       mobile: draft.mobile, email: draft.email,
     });
   }
+  db.applications.add(app);
   notify({ audience: draft.userId, type: "submitted", title: "Application submitted", message: `Your application ${appId} is under review. We'll notify you once approved.`, link: `/student/applications/${appId}` });
   notify({ audience: "admin", type: "submitted", title: "New application", message: `${draft.fullName} applied for a ${draft.passType} pass. Review now.`, link: "/admin/applications" });
   return { app };
